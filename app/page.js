@@ -182,7 +182,7 @@ export default function Home() {
       let outputText = ''
       let engagedAgents = []
       let pollCount = 0
-      const maxPolls = 400 // ~20 minut
+      const maxPolls = 800 // ~40 minut
 
       pollingRef.current = setInterval(async () => {
         pollCount++
