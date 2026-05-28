@@ -3,7 +3,7 @@ export async function POST(req) {
     const { prompt } = await req.json()
 
     // 1. Utwórz sesję
-    const sessionRes = await fetch('https://api.anthropic.com/v1/beta/sessions', {
+    const sessionRes = await fetch('https://api.anthropic.com/v1/sessions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -12,7 +12,7 @@ export async function POST(req) {
         'anthropic-beta': 'managed-agents-2026-04-01'
       },
       body: JSON.stringify({
-        agent: { type: 'agent', id: process.env.ANTHROPIC_AGENT_ID },
+        agent: process.env.ANTHROPIC_AGENT_ID,
         environment_id: process.env.ANTHROPIC_ENVIRONMENT_ID
       })
     })
@@ -25,7 +25,7 @@ export async function POST(req) {
     const session = await sessionRes.json()
 
     // 2. Wyślij prompt
-    const sendRes = await fetch(`https://api.anthropic.com/v1/beta/sessions/${session.id}/events`, {
+    const sendRes = await fetch(`https://api.anthropic.com/v1/sessions/${session.id}/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

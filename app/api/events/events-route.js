@@ -17,11 +17,8 @@ export async function GET(req) {
       let lastEventId = null
       let done = false
       let attempts = 0
-      const maxAttempts = 180 // ~6 minut
+      const maxAttempts = 180
 
-      // Zbieramy zaangażowanych agentów i finalny output
-      const engagedAgents = new Set()
-      let finalOutput = ''
       let outputBuffer = ''
 
       while (!done && attempts < maxAttempts) {
@@ -29,7 +26,7 @@ export async function GET(req) {
         await new Promise(r => setTimeout(r, 2000))
 
         try {
-          const url = new URL(`https://api.anthropic.com/v1/beta/sessions/${sessionId}/events`)
+          const url = new URL(`https://api.anthropic.com/v1/sessions/${sessionId}/events`)
           if (lastEventId) url.searchParams.set('after', lastEventId)
 
           const res = await fetch(url.toString(), {
@@ -49,33 +46,26 @@ export async function GET(req) {
             if (event.id) lastEventId = event.id
             const type = event.type || ''
 
-            // Wykrywaj zaangażowanych agentów
             if (type === 'session.thread_created') {
-              const threadId = event.thread_id || ''
-              // Informuj frontend o nowym agencie
-              send({ type: 'agent_engaged', threadId })
+              send({ type: 'agent_engaged', threadId: event.thread_id || '' })
             }
 
             if (type === 'session.thread_status_idle') {
               send({ type: 'agent_done', threadId: event.thread_id || '' })
             }
 
-            // Zbieraj output Orchestratora (wiadomości w głównym wątku)
             if (type === 'agent.message' || type === 'session.message') {
               const blocks = event.content || []
               for (const block of blocks) {
                 if (block.type === 'text' && block.text) {
                   outputBuffer += block.text
-                  // Streamuj tekst na bieżąco
                   send({ type: 'output_chunk', text: block.text })
                 }
               }
             }
 
-            // Sesja zakończona
             if (type === 'session.status_idle' || type === 'session.completed') {
-              finalOutput = outputBuffer
-              send({ type: 'done', finalOutput })
+              send({ type: 'done', finalOutput: outputBuffer })
               done = true
               break
             }
@@ -87,7 +77,7 @@ export async function GET(req) {
             }
           }
         } catch (e) {
-          // kontynuuj polling mimo błędu sieciowego
+          // kontynuuj mimo błędu sieciowego
         }
       }
 
