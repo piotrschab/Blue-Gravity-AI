@@ -1,99 +1,68 @@
 export async function GET(req) {
   const { searchParams } = new URL(req.url)
   const sessionId = searchParams.get('sessionId')
+  const after = searchParams.get('after') || null
 
   if (!sessionId) {
     return Response.json({ error: 'Brak sessionId' }, { status: 400 })
   }
 
-  const encoder = new TextEncoder()
+  try {
+    const url = new URL(`https://api.anthropic.com/v1/sessions/${sessionId}/events`)
+    if (after) url.searchParams.set('after', after)
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (data) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+    const res = await fetch(url.toString(), {
+      headers: {
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'managed-agents-2026-04-01'
+      }
+    })
+
+    if (!res.ok) {
+      const text = await res.text()
+      return Response.json({ error: `HTTP ${res.status}: ${text.slice(0, 200)}` }, { status: 500 })
+    }
+
+    const data = await res.json()
+    const events = data.events || data.data || []
+
+    // Znajdź ostatnie ID i sprawdź czy sesja zakończona
+    let lastId = after
+    let done = false
+    let outputChunks = []
+    let agentsEngaged = []
+
+    for (const event of events) {
+      if (event.id) lastId = event.id
+      const type = event.type || ''
+
+      if (type === 'session.thread_created') {
+        agentsEngaged.push(event.thread_id || '')
       }
 
-      let lastEventId = null
-      let done = false
-      let attempts = 0
-      const maxAttempts = 180
-
-      let outputBuffer = ''
-
-      while (!done && attempts < maxAttempts) {
-        attempts++
-        await new Promise(r => setTimeout(r, 2000))
-
-        try {
-          const url = new URL(`https://api.anthropic.com/v1/sessions/${sessionId}/events`)
-          if (lastEventId) url.searchParams.set('after', lastEventId)
-
-          const res = await fetch(url.toString(), {
-            headers: {
-              'x-api-key': process.env.ANTHROPIC_API_KEY,
-              'anthropic-version': '2023-06-01',
-              'anthropic-beta': 'managed-agents-2026-04-01'
-            }
-          })
-
-          if (!res.ok) continue
-
-          const data = await res.json()
-          const events = data.events || data.data || []
-
-          for (const event of events) {
-            if (event.id) lastEventId = event.id
-            const type = event.type || ''
-
-            if (type === 'session.thread_created') {
-              send({ type: 'agent_engaged', threadId: event.thread_id || '' })
-            }
-
-            if (type === 'session.thread_status_idle') {
-              send({ type: 'agent_done', threadId: event.thread_id || '' })
-            }
-
-            if (type === 'agent.message' || type === 'session.message') {
-              const blocks = event.content || []
-              for (const block of blocks) {
-                if (block.type === 'text' && block.text) {
-                  outputBuffer += block.text
-                  send({ type: 'output_chunk', text: block.text })
-                }
-              }
-            }
-
-            if (type === 'session.status_idle' || type === 'session.completed') {
-              send({ type: 'done', finalOutput: outputBuffer })
-              done = true
-              break
-            }
-
-            if (type === 'error') {
-              send({ type: 'error', message: event.message || 'Nieznany błąd' })
-              done = true
-              break
-            }
+      if (type === 'agent.message' || type === 'session.message') {
+        for (const block of (event.content || [])) {
+          if (block.type === 'text' && block.text) {
+            outputChunks.push(block.text)
           }
-        } catch (e) {
-          // kontynuuj mimo błędu sieciowego
         }
       }
 
-      if (!done) {
-        send({ type: 'done', finalOutput: outputBuffer || 'Brak odpowiedzi — sprawdź Console.' })
+      if (type === 'session.status_idle' || type === 'session.completed') {
+        done = true
       }
-
-      controller.close()
     }
-  })
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
-    }
-  })
+    return Response.json({
+      events: events,
+      lastId,
+      done,
+      outputChunks,
+      agentsEngaged
+    })
+
+  } catch (err) {
+    return Response.json({ error: err.message }, { status: 500 })
+  }
 }
