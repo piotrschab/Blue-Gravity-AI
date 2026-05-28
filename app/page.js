@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-// Kolory agentów
 const AGENT_COLORS = {
   0: { bg: 'rgba(46,95,163,0.15)', color: '#93b8e8', border: 'rgba(46,95,163,0.3)', label: 'Research' },
   1: { bg: 'rgba(224,123,0,0.15)', color: '#f5a623', border: 'rgba(224,123,0,0.3)', label: 'QA' },
@@ -58,19 +57,15 @@ function Message({ msg }) {
 
   return (
     <div style={{ display: 'flex', gap: 12, marginBottom: 24, alignItems: 'flex-start' }}>
-      {/* Avatar */}
       <div style={{
         width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
         background: 'linear-gradient(135deg, #1F3864, #2E5FA3)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700, color: '#e8edf5',
         border: '1px solid #2E5FA3'
-      }}>
-        O
-      </div>
+      }}>O</div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Nagłówek z zaangażowanymi agentami */}
         {msg.agents && msg.agents.length > 0 && (
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
             <span style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', marginRight: 2 }}>via</span>
@@ -78,7 +73,6 @@ function Message({ msg }) {
           </div>
         )}
 
-        {/* Treść odpowiedzi */}
         {msg.thinking ? (
           <ThinkingDots />
         ) : (
@@ -90,7 +84,6 @@ function Message({ msg }) {
           </div>
         )}
 
-        {/* Timestamp */}
         {!msg.thinking && msg.time && (
           <div style={{ fontSize: 10, color: '#6b7fa3', marginTop: 6, fontFamily: 'DM Mono' }}>
             {msg.time}
@@ -102,7 +95,7 @@ function Message({ msg }) {
 }
 
 export default function Home() {
-  const [conversations, setConversations] = useState([]) // historia z Supabase
+  const [conversations, setConversations] = useState([])
   const [activeConvId, setActiveConvId] = useState(null)
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -110,7 +103,7 @@ export default function Home() {
   const [currentSessionId, setCurrentSessionId] = useState(null)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
-  const eventSourceRef = useRef(null)
+  const pollingRef = useRef(null)
 
   useEffect(() => { loadConversations() }, [])
   useEffect(() => {
@@ -126,10 +119,12 @@ export default function Home() {
   }
 
   function newConversation() {
+    if (pollingRef.current) clearInterval(pollingRef.current)
     setActiveConvId(null)
     setMessages([])
     setCurrentSessionId(null)
     setInput('')
+    setIsLoading(false)
     inputRef.current?.focus()
   }
 
@@ -138,9 +133,7 @@ export default function Home() {
     try {
       const msgs = JSON.parse(conv.messages || '[]')
       setMessages(msgs)
-    } catch {
-      setMessages([])
-    }
+    } catch { setMessages([]) }
     setCurrentSessionId(conv.session_id)
   }
 
@@ -166,14 +159,12 @@ export default function Home() {
       agents: []
     }
 
-    const newMessages = [...messages, userMsg, thinkingMsg]
-    setMessages(newMessages)
+    setMessages(prev => [...prev, userMsg, thinkingMsg])
 
     const convId = activeConvId || `conv_${Date.now()}`
     if (!activeConvId) setActiveConvId(convId)
 
     try {
-      // Utwórz sesję i wyślij prompt
       const res = await fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -186,89 +177,55 @@ export default function Home() {
       const sid = data.sessionId
       setCurrentSessionId(sid)
 
-      // Śledź eventy
+      // Polling co 3 sekundy
+      let lastId = null
       let outputText = ''
       let engagedAgents = []
-      let agentCount = 0
+      let pollCount = 0
+      const maxPolls = 100 // ~5 minut
 
-      const evtSource = new EventSource(`/api/events?sessionId=${sid}`)
-      eventSourceRef.current = evtSource
-
-      evtSource.onmessage = async (e) => {
-        const event = JSON.parse(e.data)
-
-        if (event.type === 'agent_engaged') {
-          agentCount++
-          engagedAgents = [...engagedAgents, agentCount]
-          // Aktualizuj thinking message z agentami
-          setMessages(prev => prev.map(m =>
-            m.thinking ? { ...m, agents: engagedAgents } : m
-          ))
+      pollingRef.current = setInterval(async () => {
+        pollCount++
+        if (pollCount > maxPolls) {
+          clearInterval(pollingRef.current)
+          finishMessage(outputText || 'Timeout — sprawdź Console.', engagedAgents, convId, sid, userMessage, userMsg)
+          return
         }
 
-        else if (event.type === 'output_chunk') {
-          outputText += event.text
-          // Streamuj tekst do wiadomości
-          setMessages(prev => prev.map(m =>
-            m.thinking ? { ...m, thinking: false, content: outputText } : m
-          ))
-        }
+        try {
+          const url = `/api/events?sessionId=${sid}${lastId ? `&after=${lastId}` : ''}`
+          const evRes = await fetch(url)
+          const evData = await evRes.json()
 
-        else if (event.type === 'done') {
-          evtSource.close()
-          setIsLoading(false)
-
-          const finalText = event.finalOutput || outputText || 'Pipeline zakończony.'
-          const time = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-
-          const assistantMsg = {
-            id: Date.now() + 2,
-            role: 'assistant',
-            content: finalText,
-            thinking: false,
-            agents: engagedAgents,
-            time
+          if (evData.error) {
+            console.error('Poll error:', evData.error)
+            return
           }
 
-          const finalMessages = [...messages, userMsg, assistantMsg]
-          setMessages(finalMessages)
+          if (evData.lastId) lastId = evData.lastId
 
-          // Zapisz do Supabase
-          const title = userMessage.length > 50 ? userMessage.slice(0, 50) + '...' : userMessage
-          await fetch('/api/history', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              conversationId: convId,
-              sessionId: sid,
-              title,
-              messages: finalMessages.filter(m => !m.thinking),
-              agents: engagedAgents,
-              status: 'done'
-            })
-          })
+          if (evData.agentsEngaged?.length > 0) {
+            engagedAgents = [...new Set([...engagedAgents, ...evData.agentsEngaged])]
+            setMessages(prev => prev.map(m =>
+              m.thinking ? { ...m, agents: engagedAgents } : m
+            ))
+          }
 
-          loadConversations()
+          if (evData.outputChunks?.length > 0) {
+            outputText += evData.outputChunks.join('')
+            setMessages(prev => prev.map(m =>
+              m.thinking ? { ...m, thinking: false, content: outputText } : m
+            ))
+          }
+
+          if (evData.done) {
+            clearInterval(pollingRef.current)
+            finishMessage(outputText || 'Pipeline zakończony.', engagedAgents, convId, sid, userMessage, userMsg)
+          }
+        } catch (e) {
+          console.error('Poll fetch error:', e)
         }
-
-        else if (event.type === 'error') {
-          evtSource.close()
-          setIsLoading(false)
-          setMessages(prev => prev.map(m =>
-            m.thinking ? { ...m, thinking: false, content: `Błąd: ${event.message}` } : m
-          ))
-        }
-      }
-
-      evtSource.onerror = () => {
-        evtSource.close()
-        setIsLoading(false)
-        if (!outputText) {
-          setMessages(prev => prev.map(m =>
-            m.thinking ? { ...m, thinking: false, content: 'Połączenie przerwane. Spróbuj ponownie.' } : m
-          ))
-        }
-      }
+      }, 3000)
 
     } catch (err) {
       setIsLoading(false)
@@ -276,6 +233,39 @@ export default function Home() {
         m.thinking ? { ...m, thinking: false, content: `Błąd: ${err.message}` } : m
       ))
     }
+  }
+
+  async function finishMessage(finalText, agents, convId, sid, userMessage, userMsg) {
+    setIsLoading(false)
+    const time = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+
+    const assistantMsg = {
+      id: Date.now() + 2,
+      role: 'assistant',
+      content: finalText,
+      thinking: false,
+      agents,
+      time
+    }
+
+    setMessages(prev => {
+      const filtered = prev.filter(m => !m.thinking)
+      return [...filtered, assistantMsg]
+    })
+
+    try {
+      const title = userMessage.length > 50 ? userMessage.slice(0, 50) + '...' : userMessage
+      await fetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: convId, sessionId: sid,
+          title, messages: [userMsg, assistantMsg],
+          agents, status: 'done'
+        })
+      })
+      loadConversations()
+    } catch (e) {}
   }
 
   function handleKeyDown(e) {
@@ -300,13 +290,10 @@ export default function Home() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-
-      {/* SIDEBAR */}
       <div style={{
         width: 260, background: '#0d1220', borderRight: '1px solid #1e2d47',
         display: 'flex', flexDirection: 'column', flexShrink: 0
       }}>
-        {/* Logo */}
         <div style={{
           padding: '18px 16px', borderBottom: '1px solid #1e2d47',
           display: 'flex', alignItems: 'center', gap: 10
@@ -320,7 +307,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* New chat */}
         <div style={{ padding: '12px 10px' }}>
           <button onClick={newConversation} style={{
             width: '100%', padding: '9px 14px',
@@ -337,7 +323,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Historia */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 10px' }}>
           {Object.entries(groupedConversations()).map(([group, convs]) =>
             convs.length > 0 ? (
@@ -377,19 +362,17 @@ export default function Home() {
           )}
         </div>
 
-        {/* Status */}
         <div style={{ padding: '12px 16px', borderTop: '1px solid #1e2d47' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
-            <span style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono' }}>Orchestrator aktywny</span>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: isLoading ? '#E07B00' : '#22c55e', boxShadow: isLoading ? '0 0 6px #E07B00' : '0 0 6px #22c55e' }} />
+            <span style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono' }}>
+              {isLoading ? 'Pipeline aktywny...' : 'Orchestrator aktywny'}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* MAIN CHAT */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-        {/* Header */}
         <div style={{
           padding: '0 24px', height: 52, borderBottom: '1px solid #1e2d47',
           background: '#111827', display: 'flex', alignItems: 'center',
@@ -402,18 +385,13 @@ export default function Home() {
             }
           </div>
           {currentSessionId && (
-            <a
-              href={`https://platform.claude.com/sessions/${currentSessionId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', textDecoration: 'none', border: '1px solid #1e2d47', borderRadius: 4, padding: '3px 8px' }}
-            >
+            <a href={`https://platform.claude.com/sessions/${currentSessionId}`} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', textDecoration: 'none', border: '1px solid #1e2d47', borderRadius: 4, padding: '3px 8px' }}>
               Console ↗
             </a>
           )}
         </div>
 
-        {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '32px 10%' }}>
           {messages.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
@@ -459,13 +437,11 @@ export default function Home() {
           )}
         </div>
 
-        {/* Input */}
         <div style={{ padding: '16px 10%', borderTop: '1px solid #1e2d47', background: '#0a0e1a', flexShrink: 0 }}>
           <div style={{
             display: 'flex', gap: 10, alignItems: 'flex-end',
             background: '#111827', border: '1px solid #1e2d47',
-            borderRadius: 12, padding: '10px 14px',
-            transition: 'border-color 0.15s'
+            borderRadius: 12, padding: '10px 14px'
           }}>
             <textarea
               ref={inputRef}
@@ -486,18 +462,14 @@ export default function Home() {
                 e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
               }}
             />
-            <button
-              onClick={sendMessage}
-              disabled={isLoading || !input.trim()}
-              style={{
-                width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-                background: isLoading || !input.trim() ? '#1a2235' : '#1F3864',
-                border: `1px solid ${isLoading || !input.trim() ? '#1e2d47' : '#2E5FA3'}`,
-                cursor: isLoading || !input.trim() ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'all 0.15s', opacity: isLoading || !input.trim() ? 0.4 : 1
-              }}
-            >
+            <button onClick={sendMessage} disabled={isLoading || !input.trim()} style={{
+              width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+              background: isLoading || !input.trim() ? '#1a2235' : '#1F3864',
+              border: `1px solid ${isLoading || !input.trim() ? '#1e2d47' : '#2E5FA3'}`,
+              cursor: isLoading || !input.trim() ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'all 0.15s', opacity: isLoading || !input.trim() ? 0.4 : 1
+            }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#e8edf5" strokeWidth="2.5" strokeLinecap="round">
                 <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
               </svg>
@@ -510,10 +482,7 @@ export default function Home() {
       </div>
 
       <style>{`
-        @keyframes bounce {
-          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-          40% { transform: translateY(-6px); opacity: 1; }
-        }
+        @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-6px); opacity: 1; } }
         textarea::placeholder { color: #6b7fa3; }
       `}</style>
     </div>
