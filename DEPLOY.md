@@ -42,3 +42,4 @@ Gdy dodasz nowych agentów w Claude Console i zarejestrujesz ich
 w Orchestratorze (multiagent.agents w YAML) — aplikacja
 automatycznie ich wykryje i pokaże w interfejsie.
 Nie musisz nic zmieniać w kodzie.
+  
