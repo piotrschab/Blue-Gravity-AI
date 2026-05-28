@@ -2,7 +2,7 @@ export async function POST(req) {
   try {
     const { prompt } = await req.json()
 
-    const sessionRes = await fetch('https://api.anthropic.com/v1/beta/sessions', {
+    const sessionRes = await fetch('https://api.anthropic.com/v1/sessions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -27,7 +27,7 @@ export async function POST(req) {
 
     const session = JSON.parse(rawText)
 
-    const sendRes = await fetch(`https://api.anthropic.com/v1/beta/sessions/${session.id}/events`, {
+    const sendRes = await fetch(`https://api.anthropic.com/v1/sessions/${session.id}/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
