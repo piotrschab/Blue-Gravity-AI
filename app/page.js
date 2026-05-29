@@ -270,7 +270,7 @@ export default function Home() {
       const sid = data.sessionId
       setCurrentSessionId(sid)
 
-      let lastId = null
+      let lastTimestamp = null
       let outputText = ''
       let allAgentsAccum = []
       let activeAgentsAccum = []
@@ -287,13 +287,13 @@ export default function Home() {
         }
 
         try {
-          const url = `/api/events?sessionId=${sid}${lastId ? `&after=${lastId}` : ''}`
+          const url = `/api/events?sessionId=${sid}${lastTimestamp ? `&afterTimestamp=${encodeURIComponent(lastTimestamp)}` : ''}`
           const evRes = await fetch(url)
           const evData = await evRes.json()
 
           if (evData.error) return
 
-          if (evData.lastId) lastId = evData.lastId
+          if (evData.lastTimestamp) lastTimestamp = evData.lastTimestamp
 
           // Aktualizuj agentów
           if (evData.agentsEngaged?.length > 0) {
