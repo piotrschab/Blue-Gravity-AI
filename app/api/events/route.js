@@ -1,59 +1,57 @@
 export async function GET(req) {
-  const { searchParams } = new URL(req.url)
-  const sessionId = searchParams.get('sessionId')
-  const after = searchParams.get('after') || null
-
-  if (!sessionId) {
-    return Response.json({ error: 'Brak sessionId' }, { status: 400 })
-  }
-
   try {
-    const url = new URL(`https://api.anthropic.com/v1/sessions/${sessionId}/events`)
-    if (after) url.searchParams.set('after', after)
-
-    const res = await fetch(url.toString(), {
-      headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'managed-agents-2026-04-01'
-      }
-    })
-
+    const { searchParams } = new URL(req.url)
+    const sessionId = searchParams.get('sessionId')
+    const after = searchParams.get('after') || null
+ 
+    if (!sessionId) {
+      return Response.json({ error: 'Brak sessionId' }, { status: 400 })
+    }
+ 
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    const headers = {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'managed-agents-2026-04-01'
+    }
+ 
+    // Pobierz eventy
+    let eventsUrl = `https://api.anthropic.com/v1/sessions/${sessionId}/events`
+    if (after) eventsUrl += `?after=${after}`
+ 
+    const res = await fetch(eventsUrl, { headers })
+ 
     if (!res.ok) {
       const text = await res.text()
-      return Response.json({ error: `HTTP ${res.status}: ${text.slice(0, 200)}` }, { status: 500 })
+      return Response.json({ error: `Events HTTP ${res.status}: ${text.slice(0, 300)}` }, { status: 500 })
     }
-
+ 
     const data = await res.json()
     const events = data.events || data.data || []
-
+ 
     let lastId = after
     let done = false
     let outputChunks = []
     let agentsEngaged = []
-    let activeAgents = []   // agenci aktualnie pracujący
-    let completedAgents = [] // agenci którzy skończyli
-
+    let activeAgents = []
+    let completedAgents = []
+ 
     for (const event of events) {
       if (event.id) lastId = event.id
       const type = event.type || ''
-
-      // Agent uruchomiony
+ 
       if (type === 'session.thread_created') {
-        const threadId = event.thread_id || ''
-        const agentName = event.agent_name || event.name || null
-        agentsEngaged.push({ threadId, agentName })
-        activeAgents.push({ threadId, agentName })
+        const agent = { threadId: event.thread_id || '', agentName: event.agent_name || null }
+        agentsEngaged.push(agent)
+        activeAgents.push(agent)
       }
-
-      // Agent zakończył
+ 
       if (type === 'session.thread_status_idle') {
-        const threadId = event.thread_id || ''
-        activeAgents = activeAgents.filter(a => a.threadId !== threadId)
-        completedAgents.push(threadId)
+        const tid = event.thread_id || ''
+        activeAgents = activeAgents.filter(a => a.threadId !== tid)
+        completedAgents.push(tid)
       }
-
-      // Output tekstowy
+ 
       if (type === 'agent.message' || type === 'session.message') {
         for (const block of (event.content || [])) {
           if (block.type === 'text' && block.text) {
@@ -61,44 +59,29 @@ export async function GET(req) {
           }
         }
       }
-
+ 
       if (type === 'session.status_idle' || type === 'session.completed') {
         done = true
         activeAgents = []
       }
     }
-
-    // Jeśli nie znaleziono done w eventach, sprawdź status sesji bezpośrednio
+ 
+    // Sprawdź status sesji jeśli nie znaleziono done w eventach
     if (!done) {
-      const statusRes = await fetch(`https://api.anthropic.com/v1/sessions/${sessionId}`, {
-        headers: {
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'managed-agents-2026-04-01'
-        }
-      })
-
+      const statusRes = await fetch(`https://api.anthropic.com/v1/sessions/${sessionId}`, { headers })
       if (statusRes.ok) {
         const statusData = await statusRes.json()
-        const sessionStatus = statusData.status || ''
-        if (sessionStatus === 'idle' || sessionStatus === 'completed') {
+        if (statusData.status === 'idle' || statusData.status === 'completed') {
           done = true
           activeAgents = []
         }
       }
     }
-
-    return Response.json({
-      events,
-      lastId,
-      done,
-      outputChunks,
-      agentsEngaged,
-      activeAgents,
-      completedAgents
-    })
-
+ 
+    return Response.json({ events, lastId, done, outputChunks, agentsEngaged, activeAgents, completedAgents })
+ 
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
+    return Response.json({ error: err.message, stack: err.stack?.slice(0, 200) }, { status: 500 })
   }
 }
+ 
