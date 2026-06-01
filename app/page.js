@@ -672,11 +672,16 @@ export default function Home() {
                 ? (conversations.find(c => c.conversation_id === activeConvId)?.title || 'Conversation')
                 : 'New conversation'}
             </div>
-            {sessionId && (
-              <a className="console-link" href={`https://platform.claude.com/sessions/${sessionId}`} target="_blank" rel="noopener noreferrer">
-                View in Console ↗
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <a className="console-link" href="/files">
+                📁 Files
               </a>
-            )}
+              {sessionId && (
+                <a className="console-link" href={`https://platform.claude.com/sessions/${sessionId}`} target="_blank" rel="noopener noreferrer">
+                  Console ↗
+                </a>
+              )}
+            </div>
           </div>
 
           <div className="messages">
