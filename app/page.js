@@ -268,48 +268,40 @@ export default function Home() {
       const sid = data.sessionId
       setSessionId(sid)
 
-      let lastId = null
-      let outputText = ''
       let allAcc = [], activeAcc = [], completedAcc = []
       let polls = 0
 
       pollingRef.current = setInterval(async () => {
         if (++polls > 400) {
           stopPolling()
-          finish(outputText || 'Timeout.', allAcc, convId, sid, text, userMsg)
+          finish('Timeout — no response received.', allAcc, convId, sid, text, userMsg)
           return
         }
         try {
-          const url = `/api/events?sessionId=${sid}${lastId ? `&afterId=${encodeURIComponent(lastId)}` : ''}`
-          const ev = await (await fetch(url)).json()
+          const ev = await (await fetch(`/api/events?sessionId=${sid}`)).json()
           if (ev.error) { console.error('Events:', ev.error); return }
 
-          if (ev.lastId) lastId = ev.lastId
-
-          // agents
+          // agents — server already deduplicates
           if (ev.agentsEngaged?.length) {
-            const fresh = ev.agentsEngaged.filter(a => !allAcc.find(x => x.threadId === a.threadId))
-            allAcc = [...allAcc, ...fresh]
+            allAcc = ev.agentsEngaged
             setAllAgents([...allAcc])
           }
           if (ev.activeAgents)    { activeAcc = ev.activeAgents;    setActiveAgents([...activeAcc]) }
           if (ev.completedAgents) { completedAcc = ev.completedAgents; setCompletedAgents([...completedAcc]) }
 
-          // output — append only new chunks (cursor-based, so no duplication)
-          if (ev.outputChunks?.length) {
-            outputText += ev.outputChunks.join('')
-            const snap = outputText
+          // output — always SET (replace), never append, so no duplication
+          if (ev.outputText) {
             setMessages(prev => prev.map(m =>
-              m.id === streamIdRef.current ? { ...m, content: snap, agents: allAcc } : m
+              m.id === streamIdRef.current ? { ...m, content: ev.outputText, agents: allAcc } : m
             ))
           }
 
           if (ev.done) {
             stopPolling()
-            finish(outputText || 'Done.', allAcc, convId, sid, text, userMsg)
+            finish(ev.outputText || 'Done.', allAcc, convId, sid, text, userMsg)
           }
         } catch (e) { console.error('Poll:', e) }
-      }, 1500)
+      }, 2000)
 
     } catch (err) {
       stopPolling()
