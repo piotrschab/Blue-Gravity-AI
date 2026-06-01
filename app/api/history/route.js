@@ -57,3 +57,39 @@ export async function POST(req) {
     return Response.json({ error: err.message }, { status: 500 })
   }
 }
+
+export async function PATCH(req) {
+  try {
+    const { conversationId, title } = await req.json()
+    if (!conversationId || !title) return Response.json({ error: 'Missing fields' }, { status: 400 })
+
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('bgc_conversations')
+      .update({ title, updated_at: new Date().toISOString() })
+      .eq('conversation_id', conversationId)
+
+    if (error) return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({ ok: true })
+  } catch (err) {
+    return Response.json({ error: err.message }, { status: 500 })
+  }
+}
+
+export async function DELETE(req) {
+  try {
+    const { conversationId } = await req.json()
+    if (!conversationId) return Response.json({ error: 'Missing conversationId' }, { status: 400 })
+
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('bgc_conversations')
+      .delete()
+      .eq('conversation_id', conversationId)
+
+    if (error) return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({ ok: true })
+  } catch (err) {
+    return Response.json({ error: err.message }, { status: 500 })
+  }
+}

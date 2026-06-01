@@ -173,12 +173,16 @@ export default function Home() {
   const [completedAgents, setCompletedAgents] = useState([])
   const [allAgents, setAllAgents]           = useState([])
   const [elapsed, setElapsed]               = useState(0)
+  const [renamingId, setRenamingId]         = useState(null)
+  const [renameValue, setRenameValue]       = useState('')
+  const [hoveredConvId, setHoveredConvId]   = useState(null)
 
   const bottomRef    = useRef(null)
   const inputRef     = useRef(null)
   const pollingRef   = useRef(null)
   const timerRef     = useRef(null)
   const streamIdRef  = useRef(null)
+  const renameRef    = useRef(null)
 
   useEffect(() => { loadHistory() }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, running])
@@ -199,6 +203,20 @@ export default function Home() {
     }
   }
 
+  async function generateTitle(prompt) {
+    try {
+      const r = await fetch('/api/title', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      })
+      const d = await r.json()
+      return d.title || prompt.slice(0, 60)
+    } catch (_) {
+      return prompt.slice(0, 60)
+    }
+  }
+
   async function saveHistory(convId, sid, title, msgs, agents) {
     try {
       await fetch('/api/history', {
@@ -208,6 +226,45 @@ export default function Home() {
       })
       loadHistory()
     } catch (_) {}
+  }
+
+  async function renameConv(convId, newTitle) {
+    if (!newTitle.trim()) return
+    try {
+      await fetch('/api/history', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId, title: newTitle.trim() })
+      })
+      setConversations(prev => prev.map(c =>
+        c.conversation_id === convId ? { ...c, title: newTitle.trim() } : c
+      ))
+    } catch (_) {}
+    setRenamingId(null)
+  }
+
+  async function deleteConv(convId) {
+    try {
+      await fetch('/api/history', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId })
+      })
+      setConversations(prev => prev.filter(c => c.conversation_id !== convId))
+      if (activeConvId === convId) newChat()
+    } catch (_) {}
+  }
+
+  function startRename(conv, e) {
+    e.stopPropagation()
+    setRenamingId(conv.conversation_id)
+    setRenameValue(conv.title || '')
+    setTimeout(() => renameRef.current?.focus(), 50)
+  }
+
+  function confirmRename(e) {
+    e.preventDefault()
+    if (renamingId) renameConv(renamingId, renameValue)
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -321,8 +378,8 @@ export default function Home() {
     const final = { id: streamIdRef.current, role: 'assistant', content: finalText, streaming: false, agents, time: now }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
-      const title = userText.length > 60 ? userText.slice(0, 60) + '…' : userText
-      saveHistory(convId, sid, title, updated, agents)
+      // Generate smart title asynchronously, then save
+      generateTitle(userText).then(title => saveHistory(convId, sid, title, updated, agents))
       return updated
     })
   }
@@ -366,12 +423,19 @@ export default function Home() {
         .new-btn:hover { background: #131929; border-color: #2d3f5e; color: #e2e8f0; }
         .sb-list  { flex: 1; overflow-y: auto; padding: 4px 8px 12px; }
         .sb-group { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 0.08em; padding: 10px 6px 4px; }
-        .conv-btn { width: 100%; padding: 7px 10px; border-radius: 6px; border: none; background: transparent; cursor: pointer; text-align: left; color: #94a3b8; transition: background .12s; display: block; }
-        .conv-btn:hover    { background: #131929; }
-        .conv-btn.active   { background: #131929; color: #e2e8f0; }
+        .conv-item { position: relative; border-radius: 6px; margin-bottom: 2px; display: flex; align-items: center; }
+        .conv-item:hover, .conv-item.active { background: #131929; }
+        .conv-btn-inner { flex: 1; padding: 7px 10px; border: none; background: transparent; cursor: pointer; text-align: left; color: #94a3b8; min-width: 0; }
+        .conv-item.active .conv-btn-inner { color: #e2e8f0; }
         .conv-title { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; margin-bottom: 2px; }
         .conv-meta  { font-size: 10px; color: #475569; display: flex; align-items: center; gap: 5px; }
         .conv-dot   { width: 5px; height: 5px; border-radius: 50%; }
+        .conv-actions { display: flex; gap: 2px; padding-right: 6px; flex-shrink: 0; }
+        .conv-action-btn { width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; color: #475569; display: flex; align-items: center; justify-content: center; transition: all .12s; }
+        .conv-action-btn:hover { background: #1e2535; color: #94a3b8; }
+        .conv-action-btn.delete:hover { color: #f87171; background: rgba(248,113,113,.1); }
+        .rename-form { flex: 1; padding: 4px 6px; }
+        .rename-input { width: 100%; background: #0f1117; border: 1px solid #2d4a7a; border-radius: 4px; color: #e2e8f0; font-size: 12px; padding: 4px 7px; outline: none; font-family: inherit; }
         .sb-foot { padding: 10px 14px; border-top: 1px solid #1e2535; display: flex; align-items: center; gap: 7px; }
         .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
         .status-label { font-size: 10px; color: #475569; font-family: 'DM Mono', monospace; }
@@ -512,15 +576,45 @@ export default function Home() {
               <div key={group}>
                 <div className="sb-group">{group}</div>
                 {convs.map(c => (
-                  <button key={c.id} className={`conv-btn ${activeConvId === c.conversation_id ? 'active' : ''}`} onClick={() => openConv(c)}>
-                    <div className="conv-title">{c.title || 'Conversation'}</div>
-                    <div className="conv-meta">
-                      {Array.isArray(c.agents_engaged) && c.agents_engaged.slice(0,3).map((_, i) => (
-                        <span key={i} className="conv-dot" style={{ background: PALETTE[i%4].dot }} />
-                      ))}
-                      <span>{new Date(c.created_at).toLocaleDateString()}</span>
-                    </div>
-                  </button>
+                  <div
+                    key={c.id}
+                    className={`conv-item ${activeConvId === c.conversation_id ? 'active' : ''}`}
+                    onMouseEnter={() => setHoveredConvId(c.conversation_id)}
+                    onMouseLeave={() => setHoveredConvId(null)}
+                  >
+                    {renamingId === c.conversation_id ? (
+                      <form onSubmit={confirmRename} className="rename-form">
+                        <input
+                          ref={renameRef}
+                          className="rename-input"
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onBlur={() => renameConv(c.conversation_id, renameValue)}
+                          onKeyDown={e => { if (e.key === 'Escape') setRenamingId(null) }}
+                        />
+                      </form>
+                    ) : (
+                      <button className="conv-btn-inner" onClick={() => openConv(c)}>
+                        <div className="conv-title">{c.title || 'Conversation'}</div>
+                        <div className="conv-meta">
+                          {Array.isArray(c.agents_engaged) && c.agents_engaged.slice(0,3).map((_, i) => (
+                            <span key={i} className="conv-dot" style={{ background: PALETTE[i%4].dot }} />
+                          ))}
+                          <span>{new Date(c.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </button>
+                    )}
+                    {hoveredConvId === c.conversation_id && renamingId !== c.conversation_id && (
+                      <div className="conv-actions">
+                        <button className="conv-action-btn" title="Rename" onClick={e => startRename(c, e)}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button className="conv-action-btn delete" title="Delete" onClick={e => { e.stopPropagation(); deleteConv(c.conversation_id) }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             ))}
