@@ -228,10 +228,8 @@ export default function Home() {
 
   function openConversation(conv) {
     setActiveConvId(conv.conversation_id)
-    try {
-      const msgs = JSON.parse(conv.messages || '[]')
-      setMessages(msgs)
-    } catch { setMessages([]) }
+    const msgs = Array.isArray(conv.messages) ? conv.messages : []
+    setMessages(msgs)
     setCurrentSessionId(conv.session_id)
   }
 
@@ -348,21 +346,22 @@ export default function Home() {
       time
     }
 
-    setMessages(prev => [...prev, assistantMsg])
+    setMessages(prev => {
+      const updated = [...prev, assistantMsg]
 
-    try {
       const title = userMessage.length > 50 ? userMessage.slice(0, 50) + '...' : userMessage
-      await fetch('/api/history', {
+      fetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId: convId, sessionId: sid,
-          title, messages: [userMsg, assistantMsg],
+          title, messages: updated,
           agents, status: 'done'
         })
-      })
-      loadConversations()
-    } catch (e) {}
+      }).then(() => loadConversations()).catch(() => {})
+
+      return updated
+    })
   }
 
   function handleKeyDown(e) {
