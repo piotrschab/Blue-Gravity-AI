@@ -31,6 +31,7 @@ export async function GET(req) {
     let agentsEngaged = []
     let activeAgents = []
     let completedAgents = []
+    let files = []   // { fileId, filename, contentType }
 
     for (const event of events) {
       const type = event.type || ''
@@ -40,7 +41,6 @@ export async function GET(req) {
           threadId: event.thread_id || event.id || '',
           agentName: event.agent_name || event.agent?.name || null
         }
-        // avoid duplicates
         if (!agentsEngaged.find(a => a.threadId === agent.threadId)) {
           agentsEngaged.push(agent)
           activeAgents.push(agent)
@@ -57,6 +57,23 @@ export async function GET(req) {
         for (const block of (event.content || [])) {
           if (block.type === 'text' && block.text) {
             outputText += block.text
+          }
+          // File block formats the API might return
+          const fileId =
+            block.file?.id ||
+            block.file_id ||
+            block.source?.file_id ||
+            (block.type === 'file' && block.id) ||
+            null
+          const filename =
+            block.file?.name || block.file?.filename ||
+            block.filename || block.name || null
+          const contentType =
+            block.file?.media_type || block.file?.mime_type ||
+            block.media_type || block.mime_type || 'application/octet-stream'
+
+          if (fileId && !files.find(f => f.fileId === fileId)) {
+            files.push({ fileId, filename, contentType })
           }
         }
       }
@@ -81,7 +98,7 @@ export async function GET(req) {
       } catch (_) {}
     }
 
-    return Response.json({ done, outputText, agentsEngaged, activeAgents, completedAgents })
+    return Response.json({ done, outputText, files, agentsEngaged, activeAgents, completedAgents })
 
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })

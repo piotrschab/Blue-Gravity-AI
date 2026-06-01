@@ -136,7 +136,17 @@ function UserMsg({ content, time }) {
   )
 }
 
-function AssistantMsg({ content, agents, time, streaming }) {
+function fileIcon(contentType) {
+  if (contentType?.includes('word') || contentType?.includes('docx'))
+    return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+  if (contentType?.includes('pdf'))
+    return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+  if (contentType?.includes('sheet') || contentType?.includes('excel') || contentType?.includes('xlsx'))
+    return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+}
+
+function AssistantMsg({ content, agents, time, streaming, files }) {
   return (
     <div className="msg-row assistant-row">
       <div className="avatar">O</div>
@@ -153,6 +163,25 @@ function AssistantMsg({ content, agents, time, streaming }) {
           }
           {streaming && content && <span className="cursor" />}
         </div>
+        {files?.length > 0 && (
+          <div className="file-downloads">
+            {files.map(f => (
+              <a
+                key={f.fileId}
+                className="file-download-btn"
+                href={`/api/download/${f.fileId}`}
+                download={f.filename || 'download'}
+              >
+                <div className="file-icon">{fileIcon(f.contentType)}</div>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{f.filename || 'Download file'}</div>
+                  <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>Click to download</div>
+                </div>
+                <svg style={{ marginLeft: 'auto' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </a>
+            ))}
+          </div>
+        )}
         {!streaming && time && <div className="msg-time">{time}</div>}
       </div>
     </div>
@@ -325,37 +354,39 @@ export default function Home() {
       const sid = data.sessionId
       setSessionId(sid)
 
-      let allAcc = [], activeAcc = [], completedAcc = []
+      let allAcc = [], activeAcc = [], completedAcc = [], filesAcc = []
       let polls = 0
+      const MAX_POLLS = 2700   // 2700 × 2s = 90 minutes
 
       pollingRef.current = setInterval(async () => {
-        if (++polls > 400) {
+        if (++polls > MAX_POLLS) {
           stopPolling()
-          finish('Timeout — no response received.', allAcc, convId, sid, text, userMsg)
+          finish(
+            'The agent is taking longer than expected. Check Claude Console for the result — a download link will appear here if a file was produced.',
+            allAcc, convId, sid, text, userMsg, filesAcc
+          )
           return
         }
         try {
           const ev = await (await fetch(`/api/events?sessionId=${sid}`)).json()
           if (ev.error) { console.error('Events:', ev.error); return }
 
-          // agents — server already deduplicates
-          if (ev.agentsEngaged?.length) {
-            allAcc = ev.agentsEngaged
-            setAllAgents([...allAcc])
-          }
-          if (ev.activeAgents)    { activeAcc = ev.activeAgents;    setActiveAgents([...activeAcc]) }
-          if (ev.completedAgents) { completedAcc = ev.completedAgents; setCompletedAgents([...completedAcc]) }
+          if (ev.agentsEngaged?.length) { allAcc = ev.agentsEngaged; setAllAgents([...allAcc]) }
+          if (ev.activeAgents)          { activeAcc = ev.activeAgents;    setActiveAgents([...activeAcc]) }
+          if (ev.completedAgents)       { completedAcc = ev.completedAgents; setCompletedAgents([...completedAcc]) }
+          if (ev.files?.length)         { filesAcc = ev.files }
 
-          // output — always SET (replace), never append, so no duplication
-          if (ev.outputText) {
+          if (ev.outputText || ev.files?.length) {
             setMessages(prev => prev.map(m =>
-              m.id === streamIdRef.current ? { ...m, content: ev.outputText, agents: allAcc } : m
+              m.id === streamIdRef.current
+                ? { ...m, content: ev.outputText || m.content, agents: allAcc, files: filesAcc }
+                : m
             ))
           }
 
           if (ev.done) {
             stopPolling()
-            finish(ev.outputText || 'Done.', allAcc, convId, sid, text, userMsg)
+            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc)
           }
         } catch (e) { console.error('Poll:', e) }
       }, 2000)
@@ -369,16 +400,15 @@ export default function Home() {
     }
   }
 
-  function finish(finalText, agents, convId, sid, userText, userMsg) {
+  function finish(finalText, agents, convId, sid, userText, userMsg, files = []) {
     stopPolling()
     setRunning(false)
     setActiveAgents([])
     setElapsed(0)
     const now = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-    const final = { id: streamIdRef.current, role: 'assistant', content: finalText, streaming: false, agents, time: now }
+    const final = { id: streamIdRef.current, role: 'assistant', content: finalText, streaming: false, agents, files, time: now }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
-      // Generate smart title asynchronously, then save
       generateTitle(userText).then(title => saveHistory(convId, sid, title, updated, agents))
       return updated
     })
@@ -481,6 +511,10 @@ export default function Home() {
         .agent-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
         .assistant-content { font-size: 14px; line-height: 1.75; color: #cbd5e1; }
         .msg-time { font-size: 10px; color: #334155; margin-top: 8px; font-family: 'DM Mono', monospace; }
+        .file-downloads { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+        .file-download-btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; background: #131929; border: 1px solid #2d4a7a; border-radius: 8px; color: #60a5fa; font-size: 12px; text-decoration: none; transition: all .15s; width: fit-content; }
+        .file-download-btn:hover { background: #1a2540; border-color: #3b82f6; color: #93c5fd; }
+        .file-icon { width: 28px; height: 28px; border-radius: 6px; background: rgba(59,130,246,.15); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
         /* Pipeline bar */
         .pipeline-bar   { margin-bottom: 20px; animation: fadeUp .2s ease; }
@@ -666,7 +700,7 @@ export default function Home() {
                 {messages.map(m =>
                   m.role === 'user'
                     ? <UserMsg key={m.id} content={m.content} time={m.time} />
-                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} />
+                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} />
                 )}
                 <PipelineBar active={activeAgents} completed={completedAgents} all={allAgents} running={running} elapsed={elapsed} />
                 <div ref={bottomRef} />
