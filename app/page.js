@@ -1,301 +1,197 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
-const AGENT_COLORS = {
-  0: { bg: 'rgba(46,95,163,0.15)', color: '#93b8e8', border: 'rgba(46,95,163,0.3)', label: 'Research Agent' },
-  1: { bg: 'rgba(224,123,0,0.15)', color: '#f5a623', border: 'rgba(224,123,0,0.3)', label: 'QA Agent' },
-  2: { bg: 'rgba(34,197,94,0.12)', color: '#4ade80', border: 'rgba(34,197,94,0.25)', label: 'Synthesis Agent' },
-  3: { bg: 'rgba(167,139,250,0.15)', color: '#c4b5fd', border: 'rgba(167,139,250,0.3)', label: 'Agent' },
+// ─── Agent colour palette ────────────────────────────────────────────────────
+const PALETTE = [
+  { dot: '#60a5fa', bg: 'rgba(96,165,250,0.12)', border: 'rgba(96,165,250,0.25)', name: 'Research' },
+  { dot: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.25)', name: 'QA' },
+  { dot: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.25)', name: 'Synthesis' },
+  { dot: '#a78bfa', bg: 'rgba(167,139,250,0.12)', border: 'rgba(167,139,250,0.25)', name: 'Agent' },
+]
+
+// ─── Markdown renderer ───────────────────────────────────────────────────────
+let _key = 0
+const k = () => `md-${_key++}`
+
+function inline(str) {
+  const parts = []
+  const re = /(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`([^`]+)`)|\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g
+  let last = 0, m
+  while ((m = re.exec(str)) !== null) {
+    if (m.index > last) parts.push(str.slice(last, m.index))
+    if (m[1])      parts.push(<strong key={k()}>{m[2]}</strong>)
+    else if (m[3]) parts.push(<em key={k()}>{m[4]}</em>)
+    else if (m[5]) parts.push(<code key={k()} className="inline-code">{m[6]}</code>)
+    else if (m[7]) parts.push(<a key={k()} href={m[8]} target="_blank" rel="noopener noreferrer" className="md-link">{m[7]}</a>)
+    last = m.index + m[0].length
+  }
+  if (last < str.length) parts.push(str.slice(last))
+  return parts
 }
 
-// Simple markdown renderer — handles headers, bold, italic, lists, code, links
-function renderMarkdown(text) {
+function Markdown({ text }) {
   if (!text) return null
   const lines = text.split('\n')
-  const elements = []
+  const out = []
   let i = 0
-  let keyCounter = 0
-  const k = () => keyCounter++
-
-  const inlineFormat = (str) => {
-    const parts = []
-    const re = /(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`(.+?)`)|(\[(.+?)\]\((https?:\/\/[^\)]+)\))/g
-    let last = 0, m
-    while ((m = re.exec(str)) !== null) {
-      if (m.index > last) parts.push(str.slice(last, m.index))
-      if (m[1]) parts.push(<strong key={k()}>{m[2]}</strong>)
-      else if (m[3]) parts.push(<em key={k()}>{m[4]}</em>)
-      else if (m[5]) parts.push(<code key={k()} style={{ background: '#1a2235', padding: '1px 5px', borderRadius: 3, fontSize: '0.9em', fontFamily: 'DM Mono, monospace', color: '#93b8e8' }}>{m[6]}</code>)
-      else if (m[7]) parts.push(<a key={k()} href={m[9]} target="_blank" rel="noopener noreferrer" style={{ color: '#93b8e8', textDecoration: 'underline' }}>{m[8]}</a>)
-      last = m.index + m[0].length
-    }
-    if (last < str.length) parts.push(str.slice(last))
-    return parts.length === 1 && typeof parts[0] === 'string' ? parts[0] : parts
-  }
-
   while (i < lines.length) {
-    const line = lines[i]
-
-    // Code block
-    if (line.startsWith('```')) {
-      const lang = line.slice(3).trim()
-      const codeLines = []
+    const l = lines[i]
+    if (l.startsWith('```')) {
+      const lang = l.slice(3).trim()
+      const code = []
       i++
-      while (i < lines.length && !lines[i].startsWith('```')) {
-        codeLines.push(lines[i])
-        i++
-      }
-      elements.push(
-        <pre key={k()} style={{
-          background: '#0d1117', border: '1px solid #1e2d47', borderRadius: 8,
-          padding: '14px 16px', overflowX: 'auto', margin: '12px 0',
-          fontSize: 13, fontFamily: 'DM Mono, monospace', color: '#e8edf5', lineHeight: 1.6
-        }}>
-          {lang && <div style={{ fontSize: 10, color: '#6b7fa3', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{lang}</div>}
-          <code>{codeLines.join('\n')}</code>
-        </pre>
+      while (i < lines.length && !lines[i].startsWith('```')) { code.push(lines[i]); i++ }
+      out.push(
+        <div key={k()} className="code-block">
+          {lang && <div className="code-lang">{lang}</div>}
+          <pre><code>{code.join('\n')}</code></pre>
+        </div>
       )
-      i++
-      continue
-    }
-
-    // H1
-    if (line.startsWith('# ')) {
-      elements.push(<h1 key={k()} style={{ fontSize: 18, fontWeight: 700, fontFamily: 'Syne, sans-serif', color: '#e8edf5', margin: '20px 0 8px', borderBottom: '1px solid #1e2d47', paddingBottom: 6 }}>{inlineFormat(line.slice(2))}</h1>)
       i++; continue
     }
-    // H2
-    if (line.startsWith('## ')) {
-      elements.push(<h2 key={k()} style={{ fontSize: 15, fontWeight: 700, fontFamily: 'Syne, sans-serif', color: '#e8edf5', margin: '16px 0 6px' }}>{inlineFormat(line.slice(3))}</h2>)
-      i++; continue
-    }
-    // H3
-    if (line.startsWith('### ')) {
-      elements.push(<h3 key={k()} style={{ fontSize: 13, fontWeight: 600, color: '#93b8e8', margin: '12px 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{inlineFormat(line.slice(4))}</h3>)
-      i++; continue
-    }
-
-    // Bullet list
-    if (line.match(/^[-*]\s/)) {
+    if (l.startsWith('# '))  { out.push(<h1 key={k()} className="md-h1">{inline(l.slice(2))}</h1>); i++; continue }
+    if (l.startsWith('## ')) { out.push(<h2 key={k()} className="md-h2">{inline(l.slice(3))}</h2>); i++; continue }
+    if (l.startsWith('### ')){ out.push(<h3 key={k()} className="md-h3">{inline(l.slice(4))}</h3>); i++; continue }
+    if (l.match(/^[-*] /)) {
       const items = []
-      while (i < lines.length && lines[i].match(/^[-*]\s/)) {
-        items.push(<li key={k()} style={{ marginBottom: 4, color: '#e8edf5' }}>{inlineFormat(lines[i].slice(2))}</li>)
-        i++
-      }
-      elements.push(<ul key={k()} style={{ paddingLeft: 20, margin: '6px 0 10px', listStyle: 'disc' }}>{items}</ul>)
-      continue
+      while (i < lines.length && lines[i].match(/^[-*] /)) { items.push(<li key={k()}>{inline(lines[i].slice(2))}</li>); i++ }
+      out.push(<ul key={k()} className="md-ul">{items}</ul>); continue
     }
-
-    // Numbered list
-    if (line.match(/^\d+\.\s/)) {
+    if (l.match(/^\d+\. /)) {
       const items = []
-      while (i < lines.length && lines[i].match(/^\d+\.\s/)) {
-        items.push(<li key={k()} style={{ marginBottom: 4, color: '#e8edf5' }}>{inlineFormat(lines[i].replace(/^\d+\.\s/, ''))}</li>)
-        i++
-      }
-      elements.push(<ol key={k()} style={{ paddingLeft: 20, margin: '6px 0 10px', listStyle: 'decimal' }}>{items}</ol>)
-      continue
+      while (i < lines.length && lines[i].match(/^\d+\. /)) { items.push(<li key={k()}>{inline(lines[i].replace(/^\d+\. /, ''))}</li>); i++ }
+      out.push(<ol key={k()} className="md-ol">{items}</ol>); continue
     }
-
-    // Horizontal rule
-    if (line.match(/^---+$/)) {
-      elements.push(<hr key={k()} style={{ border: 'none', borderTop: '1px solid #1e2d47', margin: '16px 0' }} />)
-      i++; continue
-    }
-
-    // Blank line → spacer
-    if (line.trim() === '') {
-      elements.push(<div key={k()} style={{ height: 8 }} />)
-      i++; continue
-    }
-
-    // Paragraph
-    elements.push(<p key={k()} style={{ margin: '2px 0', color: '#e8edf5', lineHeight: 1.75 }}>{inlineFormat(line)}</p>)
-    i++
+    if (l.match(/^---+$/)) { out.push(<hr key={k()} className="md-hr" />); i++; continue }
+    if (l.trim() === '')   { out.push(<div key={k()} className="md-gap" />); i++; continue }
+    out.push(<p key={k()} className="md-p">{inline(l)}</p>); i++
   }
-
-  return elements
+  return <div className="markdown">{out}</div>
 }
 
-function AgentBadge({ index, label }) {
-  const c = AGENT_COLORS[index % 4]
+// ─── Sub-components ──────────────────────────────────────────────────────────
+function AgentPill({ idx, name }) {
+  const p = PALETTE[idx % 4]
   return (
-    <span style={{
-      fontSize: 9, padding: '2px 7px', borderRadius: 20,
-      background: c.bg, color: c.color, border: `1px solid ${c.border}`,
-      fontFamily: 'DM Mono, monospace', letterSpacing: '0.06em',
-      display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap'
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: c.color, display: 'inline-block' }} />
-      {label || c.label}
+    <span className="agent-pill" style={{ background: p.bg, border: `1px solid ${p.border}`, color: p.dot }}>
+      <span className="agent-dot" style={{ background: p.dot }} />
+      {name || p.name}
     </span>
   )
 }
 
-function PipelineStatus({ activeAgents, completedAgents, allAgents, isLoading, elapsed }) {
-  if (!isLoading) return null
+function Dots({ color = '#60a5fa' }) {
   return (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 24, animation: 'fadeIn 0.3s ease' }}>
-      <div style={{
-        width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-        background: 'linear-gradient(135deg, #1F3864, #2E5FA3)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700, color: '#e8edf5',
-        border: '1px solid #2E5FA3'
-      }}>O</div>
+    <span className="dots">
+      {[0,1,2].map(i => <span key={i} className="dot" style={{ background: color, animationDelay: `${i * 0.18}s` }} />)}
+    </span>
+  )
+}
 
-      <div style={{ flex: 1, background: '#111827', border: '1px solid #1e2d47', borderRadius: 12, padding: '12px 16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span style={{ fontSize: 11, color: '#6b7fa3', fontFamily: 'DM Mono' }}>Pipeline aktywny</span>
-          {elapsed > 0 && <span style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono' }}>{elapsed}s</span>}
+function PipelineBar({ active, completed, all, running, elapsed }) {
+  if (!running) return null
+  return (
+    <div className="pipeline-bar">
+      <div className="pipeline-inner">
+        <div className="pipeline-left">
+          {active.length === 0 && completed.length === 0 && (
+            <><Dots /><span className="pipeline-label">Orchestrator analyzes…</span></>
+          )}
+          {active.map(a => {
+            const idx = all.findIndex(x => x.threadId === a.threadId)
+            return (
+              <span key={a.threadId} className="pipeline-agent">
+                <AgentPill idx={idx} name={a.agentName} />
+                <Dots color={PALETTE[idx % 4].dot} />
+              </span>
+            )
+          })}
+          {completed.map(tid => {
+            const a = all.find(x => x.threadId === tid)
+            if (!a) return null
+            const idx = all.findIndex(x => x.threadId === tid)
+            return (
+              <span key={tid} className="pipeline-agent done">
+                <span className="check">✓</span>
+                <AgentPill idx={idx} name={a.agentName} />
+              </span>
+            )
+          })}
         </div>
-
-        {activeAgents.length > 0 && (
-          <div style={{ marginBottom: completedAgents.length > 0 ? 10 : 0 }}>
-            <div style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', marginBottom: 6 }}>Pracuje</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {activeAgents.map((agent) => (
-                <div key={agent.threadId} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <AgentBadge index={allAgents.findIndex(a => a.threadId === agent.threadId)} label={agent.agentName} />
-                  <div style={{ display: 'flex', gap: 3 }}>
-                    {[0,1,2].map(j => (
-                      <div key={j} style={{
-                        width: 4, height: 4, borderRadius: '50%',
-                        background: AGENT_COLORS[(allAgents.findIndex(a => a.threadId === agent.threadId)) % 4].color,
-                        animation: `bounce 1.2s ease-in-out ${j * 0.2}s infinite`, opacity: 0.8
-                      }} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {completedAgents.length > 0 && (
-          <div style={{ marginTop: activeAgents.length > 0 ? 10 : 0, paddingTop: activeAgents.length > 0 ? 10 : 0, borderTop: activeAgents.length > 0 ? '1px solid #1e2d47' : 'none' }}>
-            <div style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', marginBottom: 6 }}>Ukończone</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {allAgents.filter(a => completedAgents.includes(a.threadId)).map((agent) => (
-                <div key={agent.threadId} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ color: '#22c55e', fontSize: 10 }}>✓</span>
-                  <AgentBadge index={allAgents.findIndex(a => a.threadId === agent.threadId)} label={agent.agentName} />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeAgents.length === 0 && completedAgents.length === 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 3 }}>
-              {[0,1,2].map(j => (
-                <div key={j} style={{ width: 5, height: 5, borderRadius: '50%', background: '#2E5FA3', animation: `bounce 1.2s ease-in-out ${j * 0.2}s infinite` }} />
-              ))}
-            </div>
-            <span style={{ fontSize: 12, color: '#6b7fa3' }}>Orchestrator analizuje zapytanie...</span>
-          </div>
-        )}
+        {elapsed > 0 && <span className="pipeline-elapsed">{elapsed}s</span>}
       </div>
     </div>
   )
 }
 
-function Message({ msg }) {
-  const isUser = msg.role === 'user'
-  if (isUser) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
-        <div style={{
-          maxWidth: '70%', background: '#1F3864',
-          border: '1px solid #2E5FA3', borderRadius: '16px 16px 4px 16px',
-          padding: '12px 16px', fontSize: 14, lineHeight: 1.6, color: '#e8edf5'
-        }}>
-          {msg.content}
-        </div>
-      </div>
-    )
-  }
-
-  const isStreaming = msg.streaming
-
+function UserMsg({ content, time }) {
   return (
-    <div style={{ display: 'flex', gap: 12, marginBottom: 24, alignItems: 'flex-start' }}>
-      <div style={{
-        width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-        background: 'linear-gradient(135deg, #1F3864, #2E5FA3)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700, color: '#e8edf5',
-        border: '1px solid #2E5FA3'
-      }}>O</div>
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {msg.agents && msg.agents.length > 0 && (
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', marginRight: 2 }}>via</span>
-            {msg.agents.map((agent, i) => <AgentBadge key={i} index={i} label={agent.agentName} />)}
-          </div>
-        )}
-
-        <div style={{
-          background: '#111827', border: '1px solid #1e2d47', borderRadius: 12,
-          padding: '14px 18px', fontSize: 14, lineHeight: 1.75
-        }}>
-          {isStreaming && !msg.content ? (
-            <div style={{ display: 'flex', gap: 4, padding: '4px 0' }}>
-              {[0,1,2].map(i => (
-                <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#2E5FA3', animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-              ))}
-            </div>
-          ) : (
-            <div>{renderMarkdown(msg.content)}</div>
-          )}
-          {isStreaming && msg.content && (
-            <span style={{ display: 'inline-block', width: 8, height: 14, background: '#2E5FA3', marginLeft: 2, animation: 'pulse 0.8s ease-in-out infinite', verticalAlign: 'text-bottom' }} />
-          )}
-        </div>
-
-        {!isStreaming && msg.time && (
-          <div style={{ fontSize: 10, color: '#6b7fa3', marginTop: 6, fontFamily: 'DM Mono' }}>{msg.time}</div>
-        )}
+    <div className="msg-row user-row">
+      <div className="user-bubble">
+        <div className="bubble-text">{content}</div>
+        {time && <div className="bubble-time">{time}</div>}
       </div>
     </div>
   )
 }
 
+function AssistantMsg({ content, agents, time, streaming }) {
+  return (
+    <div className="msg-row assistant-row">
+      <div className="avatar">O</div>
+      <div className="assistant-body">
+        {agents?.length > 0 && (
+          <div className="agent-pills">
+            {agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)}
+          </div>
+        )}
+        <div className="assistant-content">
+          {streaming && !content
+            ? <Dots />
+            : <Markdown text={content} />
+          }
+          {streaming && content && <span className="cursor" />}
+        </div>
+        {!streaming && time && <div className="msg-time">{time}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main page ───────────────────────────────────────────────────────────────
 export default function Home() {
-  const [conversations, setConversations] = useState([])
-  const [historyError, setHistoryError] = useState(null)
+  const [conversations, setConversations]   = useState([])
+  const [historyError, setHistoryError]     = useState(null)
   const [historyLoading, setHistoryLoading] = useState(true)
-  const [activeConvId, setActiveConvId] = useState(null)
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [currentSessionId, setCurrentSessionId] = useState(null)
-  const [activeAgents, setActiveAgents] = useState([])
+  const [activeConvId, setActiveConvId]     = useState(null)
+  const [messages, setMessages]             = useState([])
+  const [input, setInput]                   = useState('')
+  const [running, setRunning]               = useState(false)
+  const [sessionId, setSessionId]           = useState(null)
+  const [activeAgents, setActiveAgents]     = useState([])
   const [completedAgents, setCompletedAgents] = useState([])
-  const [allAgents, setAllAgents] = useState([])
-  const [elapsed, setElapsed] = useState(0)
-  const messagesEndRef = useRef(null)
-  const inputRef = useRef(null)
-  const pollingRef = useRef(null)
-  const elapsedRef = useRef(null)
-  const streamingIdRef = useRef(null)
+  const [allAgents, setAllAgents]           = useState([])
+  const [elapsed, setElapsed]               = useState(0)
 
-  useEffect(() => { loadConversations() }, [])
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+  const bottomRef    = useRef(null)
+  const inputRef     = useRef(null)
+  const pollingRef   = useRef(null)
+  const timerRef     = useRef(null)
+  const streamIdRef  = useRef(null)
 
-  async function loadConversations() {
+  useEffect(() => { loadHistory() }, [])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, running])
+
+  // ── History ────────────────────────────────────────────────────────────────
+  async function loadHistory() {
     setHistoryLoading(true)
     setHistoryError(null)
     try {
-      const res = await fetch('/api/history')
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setConversations(data.conversations || [])
+      const r = await fetch('/api/history')
+      const d = await r.json()
+      if (d.error) throw new Error(d.error)
+      setConversations(d.conversations || [])
     } catch (e) {
       setHistoryError(e.message)
     } finally {
@@ -303,397 +199,419 @@ export default function Home() {
     }
   }
 
-  function newConversation() {
+  async function saveHistory(convId, sid, title, msgs, agents) {
+    try {
+      await fetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId, sessionId: sid, title, messages: msgs, agents, status: 'done' })
+      })
+      loadHistory()
+    } catch (_) {}
+  }
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
+  function stopPolling() {
     if (pollingRef.current) clearInterval(pollingRef.current)
-    if (elapsedRef.current) clearInterval(elapsedRef.current)
-    setActiveConvId(null)
-    setMessages([])
-    setCurrentSessionId(null)
-    setInput('')
-    setIsLoading(false)
-    setActiveAgents([])
-    setCompletedAgents([])
-    setAllAgents([])
-    setElapsed(0)
-    streamingIdRef.current = null
+    if (timerRef.current)   clearInterval(timerRef.current)
+  }
+
+  function newChat() {
+    stopPolling()
+    setActiveConvId(null); setMessages([]); setSessionId(null)
+    setInput(''); setRunning(false)
+    setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
+    setElapsed(0); streamIdRef.current = null
     inputRef.current?.focus()
   }
 
-  function openConversation(conv) {
-    if (pollingRef.current) clearInterval(pollingRef.current)
-    if (elapsedRef.current) clearInterval(elapsedRef.current)
-    setIsLoading(false)
+  function openConv(conv) {
+    stopPolling()
+    setRunning(false)
     setActiveConvId(conv.conversation_id)
-    const msgs = Array.isArray(conv.messages) ? conv.messages : []
-    setMessages(msgs)
-    setCurrentSessionId(conv.session_id)
-    setActiveAgents([])
-    setCompletedAgents([])
-    setAllAgents([])
+    setMessages(Array.isArray(conv.messages) ? conv.messages : [])
+    setSessionId(conv.session_id)
+    setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0)
   }
 
-  async function sendMessage() {
-    if (!input.trim() || isLoading) return
-
-    const userMessage = input.trim()
+  // ── Send ───────────────────────────────────────────────────────────────────
+  async function send() {
+    if (!input.trim() || running) return
+    const text = input.trim()
     setInput('')
-    setIsLoading(true)
-    setActiveAgents([])
-    setCompletedAgents([])
-    setAllAgents([])
+    setRunning(true)
+    setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0)
 
-    const userMsg = {
-      id: Date.now(),
-      role: 'user',
-      content: userMessage,
-      time: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-    }
-
-    // Add streaming placeholder message
+    const now = () => new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+    const userMsg = { id: Date.now(), role: 'user', content: text, time: now() }
     const streamId = Date.now() + 1
-    streamingIdRef.current = streamId
-    const streamingMsg = { id: streamId, role: 'assistant', content: '', streaming: true, agents: [] }
-    setMessages(prev => [...prev, userMsg, streamingMsg])
+    streamIdRef.current = streamId
+    const streamMsg = { id: streamId, role: 'assistant', content: '', streaming: true, agents: [] }
+    setMessages(prev => [...prev, userMsg, streamMsg])
 
     const convId = activeConvId || `conv_${Date.now()}`
     if (!activeConvId) setActiveConvId(convId)
 
-    // Start elapsed timer
-    elapsedRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
+    timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
 
     try {
       const res = await fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: userMessage })
+        body: JSON.stringify({ prompt: text })
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
 
       const sid = data.sessionId
-      setCurrentSessionId(sid)
+      setSessionId(sid)
 
-      let lastTimestamp = null
+      let lastId = null
       let outputText = ''
-      let allAgentsAccum = []
-      let activeAgentsAccum = []
-      let completedAgentsAccum = []
-      let pollCount = 0
-      const maxPolls = 400
+      let allAcc = [], activeAcc = [], completedAcc = []
+      let polls = 0
 
       pollingRef.current = setInterval(async () => {
-        pollCount++
-        if (pollCount > maxPolls) {
-          clearInterval(pollingRef.current)
-          clearInterval(elapsedRef.current)
-          finishMessage(outputText || 'Timeout — agent nie odpowiedział w czasie.', allAgentsAccum, convId, sid, userMessage, userMsg)
+        if (++polls > 400) {
+          stopPolling()
+          finish(outputText || 'Timeout.', allAcc, convId, sid, text, userMsg)
           return
         }
-
         try {
-          const url = `/api/events?sessionId=${sid}${lastTimestamp ? `&afterTimestamp=${encodeURIComponent(lastTimestamp)}` : ''}`
-          const evRes = await fetch(url)
-          const evData = await evRes.json()
+          const url = `/api/events?sessionId=${sid}${lastId ? `&afterId=${encodeURIComponent(lastId)}` : ''}`
+          const ev = await (await fetch(url)).json()
+          if (ev.error) { console.error('Events:', ev.error); return }
 
-          if (evData.error) {
-            console.error('Events error:', evData.error)
-            return
-          }
+          if (ev.lastId) lastId = ev.lastId
 
-          if (evData.lastTimestamp) lastTimestamp = evData.lastTimestamp
+          // agents
+          if (ev.agentsEngaged?.length) {
+            const fresh = ev.agentsEngaged.filter(a => !allAcc.find(x => x.threadId === a.threadId))
+            allAcc = [...allAcc, ...fresh]
+            setAllAgents([...allAcc])
+          }
+          if (ev.activeAgents)    { activeAcc = ev.activeAgents;    setActiveAgents([...activeAcc]) }
+          if (ev.completedAgents) { completedAcc = ev.completedAgents; setCompletedAgents([...completedAcc]) }
 
-          if (evData.agentsEngaged?.length > 0) {
-            const newAgents = evData.agentsEngaged.filter(a => !allAgentsAccum.find(x => x.threadId === a.threadId))
-            allAgentsAccum = [...allAgentsAccum, ...newAgents]
-            setAllAgents([...allAgentsAccum])
-          }
-          if (evData.activeAgents !== undefined) {
-            activeAgentsAccum = evData.activeAgents
-            setActiveAgents([...activeAgentsAccum])
-          }
-          if (evData.completedAgents !== undefined) {
-            completedAgentsAccum = evData.completedAgents
-            setCompletedAgents([...completedAgentsAccum])
-          }
-
-          // Show chunks incrementally in the streaming message
-          if (evData.outputChunks?.length > 0) {
-            outputText += evData.outputChunks.join('')
-            const currentText = outputText
+          // output — append only new chunks (cursor-based, so no duplication)
+          if (ev.outputChunks?.length) {
+            outputText += ev.outputChunks.join('')
+            const snap = outputText
             setMessages(prev => prev.map(m =>
-              m.id === streamingIdRef.current ? { ...m, content: currentText, agents: allAgentsAccum } : m
+              m.id === streamIdRef.current ? { ...m, content: snap, agents: allAcc } : m
             ))
           }
 
-          if (evData.done) {
-            clearInterval(pollingRef.current)
-            clearInterval(elapsedRef.current)
-            finishMessage(outputText || 'Gotowe.', allAgentsAccum, convId, sid, userMessage, userMsg)
+          if (ev.done) {
+            stopPolling()
+            finish(outputText || 'Done.', allAcc, convId, sid, text, userMsg)
           }
-        } catch (e) {
-          console.error('Poll error:', e)
-        }
+        } catch (e) { console.error('Poll:', e) }
       }, 1500)
 
     } catch (err) {
-      clearInterval(elapsedRef.current)
-      setIsLoading(false)
+      stopPolling()
+      setRunning(false)
       setMessages(prev => prev.map(m =>
-        m.id === streamingIdRef.current
-          ? { ...m, content: `Błąd: ${err.message}`, streaming: false }
-          : m
+        m.id === streamIdRef.current ? { ...m, content: `Error: ${err.message}`, streaming: false } : m
       ))
     }
   }
 
-  async function finishMessage(finalText, agents, convId, sid, userMessage, userMsg) {
-    setIsLoading(false)
+  function finish(finalText, agents, convId, sid, userText, userMsg) {
+    stopPolling()
+    setRunning(false)
     setActiveAgents([])
     setElapsed(0)
-    const time = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-
-    const finalMsg = {
-      id: streamingIdRef.current,
-      role: 'assistant',
-      content: finalText,
-      streaming: false,
-      agents,
-      time
-    }
-
+    const now = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+    const final = { id: streamIdRef.current, role: 'assistant', content: finalText, streaming: false, agents, time: now }
     setMessages(prev => {
-      const updated = prev.map(m => m.id === streamingIdRef.current ? finalMsg : m)
-      const title = userMessage.length > 50 ? userMessage.slice(0, 50) + '...' : userMessage
-      fetch('/api/history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId: convId, sessionId: sid, title, messages: updated, agents, status: 'done' })
-      }).then(() => loadConversations()).catch(() => {})
+      const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
+      const title = userText.length > 60 ? userText.slice(0, 60) + '…' : userText
+      saveHistory(convId, sid, title, updated, agents)
       return updated
     })
   }
 
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
+  function onKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
-  const groupedConversations = () => {
+  // ── Sidebar grouping ───────────────────────────────────────────────────────
+  const grouped = () => {
     const today = new Date().toDateString()
-    const yesterday = new Date(Date.now() - 86400000).toDateString()
-    const groups = { 'Dzisiaj': [], 'Wczoraj': [], 'Wcześniej': [] }
+    const yest  = new Date(Date.now() - 86400000).toDateString()
+    const g = { Today: [], Yesterday: [], Earlier: [] }
     conversations.forEach(c => {
       const d = new Date(c.created_at).toDateString()
-      if (d === today) groups['Dzisiaj'].push(c)
-      else if (d === yesterday) groups['Wczoraj'].push(c)
-      else groups['Wcześniej'].push(c)
+      if (d === today) g.Today.push(c)
+      else if (d === yest) g.Yesterday.push(c)
+      else g.Earlier.push(c)
     })
-    return groups
+    return g
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      {/* SIDEBAR */}
-      <div style={{ width: 260, background: '#0d1220', borderRight: '1px solid #1e2d47', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        <div style={{ padding: '18px 16px', borderBottom: '1px solid #1e2d47', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: 'linear-gradient(135deg, #1F3864, #2E5FA3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: 12, color: '#e8edf5' }}>B</span>
-          </div>
-          <div>
-            <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 13, letterSpacing: '0.04em' }}>BGC Agents</div>
-            <div style={{ fontSize: 10, color: '#6b7fa3' }}>Blue Gravity Capital</div>
-          </div>
-        </div>
+    <>
+      <style>{`
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; background: #0f1117; color: #e2e8f0; font-family: -apple-system, 'Inter', sans-serif; }
 
-        <div style={{ padding: '12px 10px' }}>
-          <button onClick={newConversation} style={{
-            width: '100%', padding: '9px 14px', background: 'transparent', border: '1px solid #1e2d47',
-            borderRadius: 8, color: '#e8edf5', fontSize: 13, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Inter, sans-serif', transition: 'all 0.15s'
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = '#1a2235'}
-          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-            <span style={{ fontSize: 16, color: '#6b7fa3' }}>+</span>
-            Nowa rozmowa
-          </button>
-        </div>
+        /* Layout */
+        .shell    { display: flex; height: 100vh; overflow: hidden; }
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 10px' }}>
-          {historyLoading && (
-            <div style={{ padding: '16px 6px', fontSize: 11, color: '#6b7fa3', fontFamily: 'DM Mono', textAlign: 'center' }}>
-              Ładowanie historii...
+        /* Sidebar */
+        .sidebar  { width: 256px; background: #0a0c14; border-right: 1px solid #1e2535; display: flex; flex-direction: column; flex-shrink: 0; }
+        .sb-head  { padding: 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #1e2535; }
+        .sb-logo  { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg,#1d4ed8,#3b82f6); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #fff; flex-shrink: 0; }
+        .sb-brand { font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
+        .sb-sub   { font-size: 10px; color: #64748b; margin-top: 1px; }
+        .sb-actions { padding: 10px 10px 6px; }
+        .new-btn  { width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid #1e2535; background: transparent; color: #94a3b8; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all .15s; text-align: left; }
+        .new-btn:hover { background: #131929; border-color: #2d3f5e; color: #e2e8f0; }
+        .sb-list  { flex: 1; overflow-y: auto; padding: 4px 8px 12px; }
+        .sb-group { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 0.08em; padding: 10px 6px 4px; }
+        .conv-btn { width: 100%; padding: 7px 10px; border-radius: 6px; border: none; background: transparent; cursor: pointer; text-align: left; color: #94a3b8; transition: background .12s; display: block; }
+        .conv-btn:hover    { background: #131929; }
+        .conv-btn.active   { background: #131929; color: #e2e8f0; }
+        .conv-title { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; margin-bottom: 2px; }
+        .conv-meta  { font-size: 10px; color: #475569; display: flex; align-items: center; gap: 5px; }
+        .conv-dot   { width: 5px; height: 5px; border-radius: 50%; }
+        .sb-foot { padding: 10px 14px; border-top: 1px solid #1e2535; display: flex; align-items: center; gap: 7px; }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .status-label { font-size: 10px; color: #475569; font-family: 'DM Mono', monospace; }
+
+        /* Error / empty states */
+        .hist-err { margin: 8px; padding: 10px 12px; border-radius: 8px; background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.2); }
+        .hist-err-title { font-size: 10px; color: #f87171; font-weight: 600; margin-bottom: 4px; }
+        .hist-err-body  { font-size: 10px; color: #64748b; word-break: break-word; line-height: 1.5; }
+        .retry-btn { margin-top: 8px; font-size: 10px; color: #60a5fa; background: none; border: none; cursor: pointer; padding: 0; }
+        .hist-empty { padding: 20px 10px; font-size: 11px; color: #475569; text-align: center; line-height: 1.6; }
+
+        /* Chat area */
+        .main   { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #0f1117; }
+        .topbar { height: 50px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2535; flex-shrink: 0; }
+        .topbar-title { font-size: 13px; color: #64748b; }
+        .console-link { font-size: 11px; color: #475569; text-decoration: none; border: 1px solid #1e2535; border-radius: 5px; padding: 3px 9px; transition: all .15s; }
+        .console-link:hover { border-color: #3b82f6; color: #60a5fa; }
+
+        .messages { flex: 1; overflow-y: auto; padding: 28px 0; }
+        .messages-inner { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+
+        /* Empty state */
+        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 20px; text-align: center; padding: 40px 20px; }
+        .empty-logo  { width: 52px; height: 52px; border-radius: 16px; background: linear-gradient(135deg,#1d4ed8,#3b82f6); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; color: #fff; box-shadow: 0 0 32px rgba(59,130,246,.25); }
+        .empty-title { font-size: 22px; font-weight: 700; color: #e2e8f0; }
+        .empty-sub   { font-size: 14px; color: #64748b; line-height: 1.6; max-width: 380px; }
+        .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 520px; margin-top: 4px; }
+        .sug-btn  { padding: 7px 14px; border-radius: 20px; border: 1px solid #1e2535; background: transparent; color: #64748b; font-size: 12px; cursor: pointer; transition: all .15s; }
+        .sug-btn:hover { border-color: #3b82f6; color: #e2e8f0; background: rgba(59,130,246,.05); }
+
+        /* Messages */
+        .msg-row { display: flex; gap: 12px; margin-bottom: 24px; animation: fadeUp .25s ease; }
+        .user-row { justify-content: flex-end; }
+        .user-bubble { max-width: 70%; }
+        .bubble-text { background: #1d4ed8; color: #fff; border-radius: 18px 18px 4px 18px; padding: 11px 16px; font-size: 14px; line-height: 1.6; }
+        .bubble-time { font-size: 10px; color: #475569; text-align: right; margin-top: 4px; font-family: 'DM Mono', monospace; }
+
+        .assistant-row { align-items: flex-start; }
+        .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg,#1d4ed8,#3b82f6); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; margin-top: 2px; }
+        .assistant-body { flex: 1; min-width: 0; }
+        .agent-pills { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
+        .agent-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 2px 8px; border-radius: 20px; font-family: 'DM Mono', monospace; letter-spacing: .04em; }
+        .agent-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+        .assistant-content { font-size: 14px; line-height: 1.75; color: #cbd5e1; }
+        .msg-time { font-size: 10px; color: #334155; margin-top: 8px; font-family: 'DM Mono', monospace; }
+
+        /* Pipeline bar */
+        .pipeline-bar   { margin-bottom: 20px; animation: fadeUp .2s ease; }
+        .pipeline-inner { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #131929; border: 1px solid #1e2535; border-radius: 10px; }
+        .pipeline-left  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .pipeline-label { font-size: 12px; color: #64748b; }
+        .pipeline-agent { display: flex; align-items: center; gap: 6px; }
+        .pipeline-agent.done { opacity: .7; }
+        .pipeline-elapsed { font-size: 10px; color: #334155; font-family: 'DM Mono', monospace; flex-shrink: 0; }
+        .check { color: #34d399; font-size: 11px; }
+
+        /* Dots animation */
+        .dots { display: inline-flex; gap: 4px; align-items: center; }
+        .dot  { width: 5px; height: 5px; border-radius: 50%; display: inline-block; animation: bounce 1.2s ease-in-out infinite; }
+        .cursor { display: inline-block; width: 2px; height: 14px; background: #3b82f6; margin-left: 2px; vertical-align: text-bottom; animation: blink .7s ease-in-out infinite; }
+
+        /* Markdown */
+        .markdown { }
+        .md-h1 { font-size: 18px; font-weight: 700; color: #e2e8f0; margin: 18px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #1e2535; }
+        .md-h2 { font-size: 15px; font-weight: 700; color: #e2e8f0; margin: 14px 0 6px; }
+        .md-h3 { font-size: 13px; font-weight: 600; color: #94a3b8; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .05em; }
+        .md-p  { margin: 3px 0; color: #cbd5e1; }
+        .md-ul { padding-left: 20px; margin: 6px 0 10px; list-style: disc; color: #cbd5e1; }
+        .md-ol { padding-left: 20px; margin: 6px 0 10px; list-style: decimal; color: #cbd5e1; }
+        .md-ul li, .md-ol li { margin-bottom: 3px; }
+        .md-hr  { border: none; border-top: 1px solid #1e2535; margin: 14px 0; }
+        .md-gap { height: 8px; }
+        .md-link { color: #60a5fa; text-decoration: underline; text-underline-offset: 2px; }
+        .inline-code { background: #131929; border: 1px solid #1e2535; padding: 1px 5px; border-radius: 4px; font-size: .88em; font-family: 'DM Mono', monospace; color: #7dd3fc; }
+        .code-block { background: #0a0c14; border: 1px solid #1e2535; border-radius: 8px; margin: 10px 0; overflow: hidden; }
+        .code-lang  { padding: 6px 14px; font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: .07em; border-bottom: 1px solid #1e2535; font-family: 'DM Mono', monospace; }
+        .code-block pre { padding: 14px; overflow-x: auto; }
+        .code-block code { font-size: 13px; color: #e2e8f0; font-family: 'DM Mono', monospace; line-height: 1.6; }
+
+        /* Input area */
+        .input-area { padding: 12px 20px 16px; border-top: 1px solid #1e2535; background: #0f1117; flex-shrink: 0; }
+        .input-wrap { max-width: 720px; margin: 0 auto; }
+        .input-box  { display: flex; align-items: flex-end; gap: 10px; background: #131929; border: 1px solid #1e2535; border-radius: 12px; padding: 10px 12px; transition: border-color .15s; }
+        .input-box:focus-within { border-color: #2d4a7a; }
+        .input-box textarea { flex: 1; background: transparent; border: none; outline: none; resize: none; font-size: 14px; color: #e2e8f0; line-height: 1.6; font-family: inherit; max-height: 160px; overflow-y: auto; }
+        .input-box textarea::placeholder { color: #334155; }
+        .send-btn { width: 34px; height: 34px; border-radius: 8px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .15s; background: #1d4ed8; }
+        .send-btn:hover:not(:disabled) { background: #2563eb; }
+        .send-btn:disabled { background: #131929; opacity: .4; cursor: not-allowed; }
+        .input-hint { font-size: 10px; color: #334155; text-align: center; margin-top: 8px; font-family: 'DM Mono', monospace; }
+
+        /* Keyframes */
+        @keyframes fadeUp { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
+        @keyframes bounce { 0%,80%,100% { transform:translateY(0); opacity:.35 } 40% { transform:translateY(-5px); opacity:1 } }
+        @keyframes blink  { 0%,100% { opacity:1 } 50% { opacity:0 } }
+        @keyframes pulse  { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #1e2535; border-radius: 4px; }
+      `}</style>
+
+      <div className="shell">
+        {/* ── Sidebar ── */}
+        <aside className="sidebar">
+          <div className="sb-head">
+            <div className="sb-logo">B</div>
+            <div>
+              <div className="sb-brand">BGC Agents</div>
+              <div className="sb-sub">Blue Gravity Capital</div>
             </div>
-          )}
-          {historyError && (
-            <div style={{ margin: '8px 6px', padding: '10px 12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8 }}>
-              <div style={{ fontSize: 10, color: '#f87171', fontFamily: 'DM Mono', marginBottom: 4 }}>Błąd historii</div>
-              <div style={{ fontSize: 10, color: '#6b7fa3', wordBreak: 'break-word' }}>{historyError}</div>
-              <button onClick={loadConversations} style={{ marginTop: 8, fontSize: 10, color: '#93b8e8', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'DM Mono' }}>
-                Spróbuj ponownie ↺
-              </button>
-            </div>
-          )}
-          {!historyLoading && !historyError && conversations.length === 0 && (
-            <div style={{ padding: '16px 6px', fontSize: 11, color: '#6b7fa3', fontFamily: 'DM Mono', textAlign: 'center' }}>
-              Brak historii rozmów
-            </div>
-          )}
-          {Object.entries(groupedConversations()).map(([group, convs]) =>
-            convs.length > 0 ? (
-              <div key={group} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 10, color: '#6b7fa3', letterSpacing: '0.08em', textTransform: 'uppercase', padding: '6px 6px', fontFamily: 'DM Mono' }}>
-                  {group}
-                </div>
-                {convs.map(conv => (
-                  <button key={conv.id} onClick={() => openConversation(conv)} style={{
-                    width: '100%', padding: '8px 10px', textAlign: 'left',
-                    background: activeConvId === conv.conversation_id ? '#1a2235' : 'transparent',
-                    border: activeConvId === conv.conversation_id ? '1px solid #1e2d47' : '1px solid transparent',
-                    borderRadius: 6, cursor: 'pointer', marginBottom: 2, transition: 'all 0.1s'
-                  }}
-                  onMouseEnter={e => { if (activeConvId !== conv.conversation_id) e.currentTarget.style.background = '#111827' }}
-                  onMouseLeave={e => { if (activeConvId !== conv.conversation_id) e.currentTarget.style.background = 'transparent' }}>
-                    <div style={{ fontSize: 12, color: '#e8edf5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>
-                      {conv.title || 'Rozmowa'}
-                    </div>
-                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      {Array.isArray(conv.agents_engaged) && conv.agents_engaged.slice(0, 3).map((_, i) => (
-                        <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: AGENT_COLORS[i % 4].color, opacity: 0.7 }} />
-                      ))}
-                      <span style={{ fontSize: 10, color: '#6b7fa3', marginLeft: 2 }}>
-                        {new Date(conv.created_at).toLocaleDateString('pl-PL')}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : null
-          )}
-        </div>
-
-        <div style={{ padding: '12px 16px', borderTop: '1px solid #1e2d47' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: isLoading ? '#E07B00' : '#22c55e',
-              boxShadow: isLoading ? '0 0 6px #E07B00' : '0 0 6px #22c55e',
-              animation: isLoading ? 'pulse 1.2s ease-in-out infinite' : 'none'
-            }} />
-            <span style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono' }}>
-              {isLoading ? 'Pipeline aktywny' : 'Orchestrator aktywny'}
-            </span>
           </div>
-        </div>
-      </div>
 
-      {/* MAIN CHAT */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{
-          padding: '0 24px', height: 52, borderBottom: '1px solid #1e2d47',
-          background: '#111827', display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', flexShrink: 0
-        }}>
-          <div style={{ fontSize: 13, color: '#6b7fa3', fontFamily: 'DM Mono' }}>
-            {activeConvId
-              ? conversations.find(c => c.conversation_id === activeConvId)?.title || 'Rozmowa'
-              : 'Nowa rozmowa'}
-          </div>
-          {currentSessionId && (
-            <a href={`https://platform.claude.com/sessions/${currentSessionId}`} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 10, color: '#6b7fa3', fontFamily: 'DM Mono', textDecoration: 'none', border: '1px solid #1e2d47', borderRadius: 4, padding: '3px 8px' }}>
-              Console ↗
-            </a>
-          )}
-        </div>
-
-        <div style={{ flex: 1, overflowY: 'auto', padding: '32px 10%' }}>
-          {messages.length === 0 && !isLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
-              <div style={{
-                width: 56, height: 56, borderRadius: '50%',
-                background: 'linear-gradient(135deg, #1F3864, #2E5FA3)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 22, fontFamily: 'Syne', fontWeight: 800, color: '#e8edf5',
-                boxShadow: '0 0 30px rgba(46,95,163,0.3)'
-              }}>O</div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontFamily: 'Syne', fontWeight: 700, fontSize: 20, marginBottom: 8 }}>BGC Agent Workspace</div>
-                <div style={{ fontSize: 13, color: '#6b7fa3', lineHeight: 1.6, maxWidth: 400 }}>
-                  Wpisz dowolne zapytanie. Orchestrator automatycznie<br />zaangażuje odpowiednich agentów.
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 500, marginTop: 8 }}>
-                {['Przeanalizuj spółkę https://grenton.pl', 'Zbierz dane o rynku OZE w Polsce 2025', 'Zweryfikuj ten dokument inwestycyjny', 'Porównaj dwóch konkurentów w segmencie B2B SaaS'].map(suggestion => (
-                  <button key={suggestion} onClick={() => setInput(suggestion)} style={{
-                    background: '#111827', border: '1px solid #1e2d47', borderRadius: 20,
-                    padding: '7px 14px', fontSize: 12, color: '#6b7fa3', cursor: 'pointer',
-                    fontFamily: 'Inter', transition: 'all 0.15s'
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#2E5FA3'; e.currentTarget.style.color = '#e8edf5' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#1e2d47'; e.currentTarget.style.color = '#6b7fa3' }}>
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <>
-              {messages.map(msg => <Message key={msg.id} msg={msg} />)}
-              <PipelineStatus activeAgents={activeAgents} completedAgents={completedAgents} allAgents={allAgents} isLoading={isLoading} elapsed={elapsed} />
-              <div ref={messagesEndRef} />
-            </>
-          )}
-        </div>
-
-        <div style={{ padding: '16px 10%', borderTop: '1px solid #1e2d47', background: '#0a0e1a', flexShrink: 0 }}>
-          <div style={{
-            display: 'flex', gap: 10, alignItems: 'flex-end',
-            background: '#111827', border: '1px solid #1e2d47', borderRadius: 12, padding: '10px 14px'
-          }}>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Wpisz zapytanie... (Enter aby wysłać, Shift+Enter nowa linia)"
-              disabled={isLoading}
-              rows={1}
-              style={{
-                flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                resize: 'none', fontSize: 14, color: '#e8edf5', fontFamily: 'Inter, sans-serif',
-                lineHeight: 1.6, maxHeight: 120, overflow: 'auto'
-              }}
-              onInput={e => {
-                e.target.style.height = 'auto'
-                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
-              }}
-            />
-            <button onClick={sendMessage} disabled={isLoading || !input.trim()} style={{
-              width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-              background: isLoading || !input.trim() ? '#1a2235' : '#1F3864',
-              border: `1px solid ${isLoading || !input.trim() ? '#1e2d47' : '#2E5FA3'}`,
-              cursor: isLoading || !input.trim() ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'all 0.15s', opacity: isLoading || !input.trim() ? 0.4 : 1
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#e8edf5" strokeWidth="2.5" strokeLinecap="round">
-                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
-              </svg>
+          <div className="sb-actions">
+            <button className="new-btn" onClick={newChat}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New conversation
             </button>
           </div>
-          <div style={{ fontSize: 10, color: '#6b7fa3', textAlign: 'center', marginTop: 8, fontFamily: 'DM Mono' }}>
-            Powered by Blue Gravity Capital Agents · Orchestrator → Research · QA · Synthesis
-          </div>
-        </div>
-      </div>
 
-      <style>{`
-        @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-6px); opacity: 1; } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-        textarea::placeholder { color: #6b7fa3; }
-      `}</style>
-    </div>
+          <div className="sb-list">
+            {historyLoading && <div className="hist-empty">Loading history…</div>}
+
+            {historyError && (
+              <div className="hist-err">
+                <div className="hist-err-title">History error</div>
+                <div className="hist-err-body">{historyError}</div>
+                <button className="retry-btn" onClick={loadHistory}>Retry ↺</button>
+              </div>
+            )}
+
+            {!historyLoading && !historyError && conversations.length === 0 && (
+              <div className="hist-empty">No conversations yet.<br />Start by sending a message.</div>
+            )}
+
+            {Object.entries(grouped()).map(([group, convs]) => convs.length === 0 ? null : (
+              <div key={group}>
+                <div className="sb-group">{group}</div>
+                {convs.map(c => (
+                  <button key={c.id} className={`conv-btn ${activeConvId === c.conversation_id ? 'active' : ''}`} onClick={() => openConv(c)}>
+                    <div className="conv-title">{c.title || 'Conversation'}</div>
+                    <div className="conv-meta">
+                      {Array.isArray(c.agents_engaged) && c.agents_engaged.slice(0,3).map((_, i) => (
+                        <span key={i} className="conv-dot" style={{ background: PALETTE[i%4].dot }} />
+                      ))}
+                      <span>{new Date(c.created_at).toLocaleDateString()}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          <div className="sb-foot">
+            <div className="status-dot" style={{
+              background: running ? '#f59e0b' : '#34d399',
+              boxShadow: `0 0 6px ${running ? '#f59e0b' : '#34d399'}`,
+              animation: running ? 'pulse 1.2s ease-in-out infinite' : 'none'
+            }} />
+            <span className="status-label">{running ? 'Pipeline active' : 'Ready'}</span>
+          </div>
+        </aside>
+
+        {/* ── Main ── */}
+        <main className="main">
+          <div className="topbar">
+            <div className="topbar-title">
+              {activeConvId
+                ? (conversations.find(c => c.conversation_id === activeConvId)?.title || 'Conversation')
+                : 'New conversation'}
+            </div>
+            {sessionId && (
+              <a className="console-link" href={`https://platform.claude.com/sessions/${sessionId}`} target="_blank" rel="noopener noreferrer">
+                View in Console ↗
+              </a>
+            )}
+          </div>
+
+          <div className="messages">
+            {messages.length === 0 && !running ? (
+              <div className="empty-state">
+                <div className="empty-logo">O</div>
+                <div>
+                  <div className="empty-title">BGC Agent Workspace</div>
+                  <div className="empty-sub" style={{ marginTop: 8 }}>
+                    Ask anything. The Orchestrator will automatically engage the right agents.
+                  </div>
+                </div>
+                <div className="suggestions">
+                  {['Analyze company https://grenton.pl', 'Collect data on RES market in Poland 2025', 'Verify this investment document', 'Compare two B2B SaaS competitors'].map(s => (
+                    <button key={s} className="sug-btn" onClick={() => setInput(s)}>{s}</button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="messages-inner">
+                {messages.map(m =>
+                  m.role === 'user'
+                    ? <UserMsg key={m.id} content={m.content} time={m.time} />
+                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} />
+                )}
+                <PipelineBar active={activeAgents} completed={completedAgents} all={allAgents} running={running} elapsed={elapsed} />
+                <div ref={bottomRef} />
+              </div>
+            )}
+          </div>
+
+          <div className="input-area">
+            <div className="input-wrap">
+              <div className="input-box">
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={onKey}
+                  placeholder="Message BGC Agents… (Enter to send, Shift+Enter for new line)"
+                  disabled={running}
+                  rows={1}
+                  onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px' }}
+                />
+                <button className="send-btn" onClick={send} disabled={running || !input.trim()}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
+                  </svg>
+                </button>
+              </div>
+              <div className="input-hint">Powered by Blue Gravity Capital Agents · Orchestrator → Research · QA · Synthesis</div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </>
   )
 }

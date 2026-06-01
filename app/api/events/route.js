@@ -2,10 +2,10 @@ export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url)
     const sessionId = searchParams.get('sessionId')
-    const afterTimestamp = searchParams.get('afterTimestamp') || null
+    const afterId = searchParams.get('afterId') || null   // cursor: last event id seen
 
     if (!sessionId) {
-      return Response.json({ error: 'Brak sessionId' }, { status: 400 })
+      return Response.json({ error: 'Missing sessionId' }, { status: 400 })
     }
 
     const headers = {
@@ -14,11 +14,9 @@ export async function GET(req) {
       'anthropic-beta': 'managed-agents-2026-04-01'
     }
 
-    // Użyj created_at[gt] do paginacji zamiast after
+    // Always fetch from the beginning, use after= cursor if available
     let eventsUrl = `https://api.anthropic.com/v1/sessions/${sessionId}/events?limit=100&order=asc`
-    if (afterTimestamp) {
-      eventsUrl += `&created_at[gt]=${encodeURIComponent(afterTimestamp)}`
-    }
+    if (afterId) eventsUrl += `&after=${encodeURIComponent(afterId)}`
 
     const res = await fetch(eventsUrl, { headers })
     const text = await res.text()
@@ -30,11 +28,11 @@ export async function GET(req) {
     const data = JSON.parse(text)
     const events = data.events || data.data || []
 
-    // Zapisz timestamp ostatniego eventu do następnego pollu
-    let lastTimestamp = afterTimestamp
+    // Cursor for next poll — use the last event's id
+    let lastId = afterId
     if (events.length > 0) {
-      const lastEvent = events[events.length - 1]
-      lastTimestamp = lastEvent.created_at || lastEvent.timestamp || afterTimestamp
+      const last = events[events.length - 1]
+      lastId = last.id || last.event_id || afterId
     }
 
     let done = false
@@ -47,7 +45,10 @@ export async function GET(req) {
       const type = event.type || ''
 
       if (type === 'session.thread_created') {
-        const agent = { threadId: event.thread_id || '', agentName: event.agent_name || null }
+        const agent = {
+          threadId: event.thread_id || event.id || '',
+          agentName: event.agent_name || event.agent?.name || null
+        }
         agentsEngaged.push(agent)
         activeAgents.push(agent)
       }
@@ -58,7 +59,7 @@ export async function GET(req) {
         completedAgents.push(tid)
       }
 
-      if (type === 'agent.message' || type === 'session.message') {
+      if (type === 'agent.message' || type === 'session.message' || type === 'message') {
         for (const block of (event.content || [])) {
           if (block.type === 'text' && block.text) {
             outputChunks.push(block.text)
@@ -66,13 +67,13 @@ export async function GET(req) {
         }
       }
 
-      if (type === 'session.status_idle' || type === 'session.completed') {
+      if (type === 'session.status_idle' || type === 'session.completed' || type === 'session.idle') {
         done = true
         activeAgents = []
       }
     }
 
-    // Sprawdź status sesji jeśli nie znaleziono done w eventach
+    // Fallback: check session status directly
     if (!done) {
       const statusRes = await fetch(`https://api.anthropic.com/v1/sessions/${sessionId}`, { headers })
       if (statusRes.ok) {
@@ -84,15 +85,7 @@ export async function GET(req) {
       }
     }
 
-    return Response.json({
-      events,
-      lastTimestamp,
-      done,
-      outputChunks,
-      agentsEngaged,
-      activeAgents,
-      completedAgents
-    })
+    return Response.json({ lastId, done, outputChunks, agentsEngaged, activeAgents, completedAgents })
 
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
