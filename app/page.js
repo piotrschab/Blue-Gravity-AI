@@ -298,6 +298,7 @@ export default function Home() {
       await fetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // title=null means "keep existing title" — API will only set it if provided
         body: JSON.stringify({ conversationId: convId, sessionId: sid, title, messages: msgs, agents, status: 'done' })
       })
       loadHistory()
@@ -384,6 +385,7 @@ export default function Home() {
     const streamMsg = { id: streamId, role: 'assistant', content: '', streaming: true, agents: [] }
     setMessages(prev => [...prev, userMsg, streamMsg])
 
+    const isNewConv = !activeConvId
     const convId = activeConvId || `conv_${Date.now()}`
     if (!activeConvId) setActiveConvId(convId)
 
@@ -437,12 +439,11 @@ export default function Home() {
 
           if (ev.fatalError || ev.done) {
             stopPolling()
-            // If done with no output and no detected error, create a generic error
             const err = ev.fatalError || (!ev.outputText ? {
               code: 'no_response',
               message: 'The agent did not return a response. This may be due to a billing limit or API error. Check Claude Console for details.'
             } : null)
-            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc, err)
+            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc, err, isNewConv)
           }
         } catch (e) { console.error('Poll:', e) }
       }, 2000)
@@ -456,7 +457,7 @@ export default function Home() {
     }
   }
 
-  function finish(finalText, agents, convId, sid, userText, userMsg, files = [], fatalError = null) {
+  function finish(finalText, agents, convId, sid, userText, userMsg, files = [], fatalError = null, isNewConv = false) {
     stopPolling()
     setRunning(false)
     setActiveAgents([])
@@ -469,14 +470,19 @@ export default function Home() {
     }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
-      // Always save — even errors — so sidebar history is complete
-      const title = fatalError
-        ? (userText.length > 50 ? userText.slice(0, 50) + '…' : userText)
-        : null
-      if (title) {
-        saveHistory(convId, sid, title, updated, agents)
+
+      if (isNewConv) {
+        // New conversation — generate a contextual title from the first prompt
+        if (fatalError) {
+          // Skip title API on error, use truncated prompt
+          const t = userText.length > 55 ? userText.slice(0, 55) + '…' : userText
+          saveHistory(convId, sid, t, updated, agents)
+        } else {
+          generateTitle(userText).then(t => saveHistory(convId, sid, t, updated, agents))
+        }
       } else {
-        generateTitle(userText).then(t => saveHistory(convId, sid, t, updated, agents))
+        // Follow-up message — keep existing title, just update messages
+        saveHistory(convId, sid, null, updated, agents)
       }
       return updated
     })

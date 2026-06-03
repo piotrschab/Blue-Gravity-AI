@@ -34,20 +34,20 @@ export async function POST(req) {
 
     const supabase = getSupabase()
 
+    // Build update payload — omit title if null so existing title is preserved
+    const payload = {
+      conversation_id: conversationId,
+      session_id: sessionId || null,
+      messages: messages || [],
+      agents_engaged: agents || [],
+      status: status || 'done',
+      updated_at: new Date().toISOString()
+    }
+    if (title !== null && title !== undefined) payload.title = title
+
     const { data, error } = await supabase
       .from('bgc_conversations')
-      .upsert(
-        {
-          conversation_id: conversationId,
-          session_id: sessionId || null,
-          title: title || 'Rozmowa',
-          messages: messages || [],
-          agents_engaged: agents || [],
-          status: status || 'done',
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'conversation_id' }
-      )
+      .upsert(payload, { onConflict: 'conversation_id' })
       .select()
       .single()
 
