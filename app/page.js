@@ -146,7 +146,27 @@ function fileIcon(contentType) {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
 }
 
-function AssistantMsg({ content, agents, time, streaming, files }) {
+function ErrorBanner({ error }) {
+  const isBilling = error?.code?.includes('billing') || error?.message?.toLowerCase().includes('credit')
+  return (
+    <div className="error-banner">
+      <div className="error-banner-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      </div>
+      <div>
+        <div className="error-banner-title">{isBilling ? 'Billing limit reached' : 'Session error'}</div>
+        <div className="error-banner-msg">{error?.message}</div>
+        {isBilling && (
+          <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="error-banner-link">
+            Go to Anthropic billing →
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AssistantMsg({ content, agents, time, streaming, files, fatalError, statusLog }) {
   return (
     <div className="msg-row assistant-row">
       <div className="avatar">O</div>
@@ -156,6 +176,17 @@ function AssistantMsg({ content, agents, time, streaming, files }) {
             {agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)}
           </div>
         )}
+        {/* Live status log — shown while streaming */}
+        {streaming && statusLog?.length > 0 && (
+          <div className="status-log">
+            {statusLog.map((s, i) => (
+              <div key={i} className="status-log-line">{s}</div>
+            ))}
+          </div>
+        )}
+        {fatalError ? (
+          <ErrorBanner error={fatalError} />
+        ) : (
         <div className="assistant-content">
           {streaming && !content
             ? <Dots />
@@ -181,6 +212,7 @@ function AssistantMsg({ content, agents, time, streaming, files }) {
               </a>
             ))}
           </div>
+        )}
         )}
         {!streaming && time && <div className="msg-time">{time}</div>}
       </div>
@@ -376,17 +408,21 @@ export default function Home() {
           if (ev.completedAgents)       { completedAcc = ev.completedAgents; setCompletedAgents([...completedAcc]) }
           if (ev.files?.length)         { filesAcc = ev.files }
 
-          if (ev.outputText || ev.files?.length) {
-            setMessages(prev => prev.map(m =>
-              m.id === streamIdRef.current
-                ? { ...m, content: ev.outputText || m.content, agents: allAcc, files: filesAcc }
-                : m
-            ))
-          }
+          // Always update the streaming message with latest content + status log
+          setMessages(prev => prev.map(m =>
+            m.id === streamIdRef.current ? {
+              ...m,
+              content: ev.outputText || m.content,
+              agents: allAcc,
+              files: filesAcc,
+              statusLog: ev.statusLog || [],
+              fatalError: ev.fatalError || null
+            } : m
+          ))
 
-          if (ev.done) {
+          if (ev.fatalError || ev.done) {
             stopPolling()
-            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc)
+            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc, ev.fatalError)
           }
         } catch (e) { console.error('Poll:', e) }
       }, 2000)
@@ -400,16 +436,20 @@ export default function Home() {
     }
   }
 
-  function finish(finalText, agents, convId, sid, userText, userMsg, files = []) {
+  function finish(finalText, agents, convId, sid, userText, userMsg, files = [], fatalError = null) {
     stopPolling()
     setRunning(false)
     setActiveAgents([])
     setElapsed(0)
     const now = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-    const final = { id: streamIdRef.current, role: 'assistant', content: finalText, streaming: false, agents, files, time: now }
+    const final = {
+      id: streamIdRef.current, role: 'assistant',
+      content: finalText, streaming: false,
+      agents, files, fatalError, statusLog: [], time: now
+    }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
-      generateTitle(userText).then(title => saveHistory(convId, sid, title, updated, agents))
+      if (!fatalError) generateTitle(userText).then(title => saveHistory(convId, sid, title, updated, agents))
       return updated
     })
   }
@@ -511,6 +551,16 @@ export default function Home() {
         .agent-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
         .assistant-content { font-size: 14px; line-height: 1.75; color: #cbd5e1; }
         .msg-time { font-size: 10px; color: #334155; margin-top: 8px; font-family: 'DM Mono', monospace; }
+        /* Error banner */
+        .error-banner { display:flex; gap:12px; padding:14px 16px; background:rgba(248,113,113,.07); border:1px solid rgba(248,113,113,.25); border-radius:10px; margin-top:4px; }
+        .error-banner-icon { color:#f87171; flex-shrink:0; margin-top:2px; }
+        .error-banner-title { font-size:13px; font-weight:600; color:#f87171; margin-bottom:4px; }
+        .error-banner-msg { font-size:12px; color:#94a3b8; line-height:1.5; }
+        .error-banner-link { display:inline-block; margin-top:8px; font-size:12px; color:#60a5fa; text-decoration:underline; text-underline-offset:2px; }
+        /* Status log */
+        .status-log { display:flex; flex-direction:column; gap:3px; margin-bottom:10px; }
+        .status-log-line { font-size:11px; color:#475569; font-family:'DM Mono',monospace; display:flex; align-items:center; gap:6px; }
+        .status-log-line:last-child { color:#94a3b8; }
         .file-downloads { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
         .file-download-btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; background: #131929; border: 1px solid #2d4a7a; border-radius: 8px; color: #60a5fa; font-size: 12px; text-decoration: none; transition: all .15s; width: fit-content; }
         .file-download-btn:hover { background: #1a2540; border-color: #3b82f6; color: #93c5fd; }
@@ -705,7 +755,7 @@ export default function Home() {
                 {messages.map(m =>
                   m.role === 'user'
                     ? <UserMsg key={m.id} content={m.content} time={m.time} />
-                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} />
+                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} fatalError={m.fatalError} statusLog={m.statusLog} />
                 )}
                 <PipelineBar active={activeAgents} completed={completedAgents} all={allAgents} running={running} elapsed={elapsed} />
                 <div ref={bottomRef} />

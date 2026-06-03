@@ -1,3 +1,16 @@
+// Event types that carry text the user should see
+const TEXT_EVENT_TYPES = new Set([
+  'agent.message',
+  'session.message',
+  'message',
+  'agent.text',
+  'text',
+  // orchestrator intermediate messages
+  'assistant',
+  'assistant.message',
+  'orchestrator.message',
+])
+
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url)
@@ -13,9 +26,8 @@ export async function GET(req) {
       'anthropic-beta': 'managed-agents-2026-04-01'
     }
 
-    // Always fetch ALL events from the beginning — client will set (not append) output
-    const eventsUrl = `https://api.anthropic.com/v1/sessions/${sessionId}/events?limit=100&order=asc`
-
+    // Fetch all events
+    const eventsUrl = `https://api.anthropic.com/v1/sessions/${sessionId}/events?limit=200&order=asc`
     const res = await fetch(eventsUrl, { headers })
     const text = await res.text()
 
@@ -27,15 +39,29 @@ export async function GET(req) {
     const events = data.events || data.data || []
 
     let done = false
+    let fatalError = null          // billing_error, auth_error, etc.
     let outputText = ''
+    let statusLog = []             // intermediate orchestrator steps shown live
     let agentsEngaged = []
     let activeAgents = []
     let completedAgents = []
-    let files = []   // { fileId, filename, contentType }
+    let files = []
 
     for (const event of events) {
-      const type = event.type || ''
+      const type = (event.type || '').toLowerCase()
 
+      // ── Error events ──────────────────────────────────────────────────────
+      if (type === 'error' || type === 'session.error' || event.error) {
+        const errObj = event.error || event
+        const code = errObj.code || errObj.error_code || 'error'
+        const msg  = errObj.message || errObj.error_message || JSON.stringify(errObj)
+        fatalError = { code, message: msg }
+        done = true
+        activeAgents = []
+        continue
+      }
+
+      // ── Agent thread lifecycle ────────────────────────────────────────────
       if (type === 'session.thread_created') {
         const agent = {
           threadId: event.thread_id || event.id || '',
@@ -45,52 +71,74 @@ export async function GET(req) {
           agentsEngaged.push(agent)
           activeAgents.push(agent)
         }
+        if (agent.agentName) {
+          statusLog.push(`▶ ${agent.agentName} started`)
+        }
       }
 
       if (type === 'session.thread_status_idle') {
         const tid = event.thread_id || ''
+        const agent = agentsEngaged.find(a => a.threadId === tid)
         activeAgents = activeAgents.filter(a => a.threadId !== tid)
         if (!completedAgents.includes(tid)) completedAgents.push(tid)
-      }
-
-      if (type === 'agent.message' || type === 'session.message' || type === 'message') {
-        for (const block of (event.content || [])) {
-          if (block.type === 'text' && block.text) {
-            outputText += block.text
-          }
-          // File block formats the API might return
-          const fileId =
-            block.file?.id ||
-            block.file_id ||
-            block.source?.file_id ||
-            (block.type === 'file' && block.id) ||
-            null
-          const filename =
-            block.file?.name || block.file?.filename ||
-            block.filename || block.name || null
-          const contentType =
-            block.file?.media_type || block.file?.mime_type ||
-            block.media_type || block.mime_type || 'application/octet-stream'
-
-          if (fileId && !files.find(f => f.fileId === fileId)) {
-            files.push({ fileId, filename, contentType })
-          }
+        if (agent?.agentName) {
+          statusLog.push(`✓ ${agent.agentName} finished`)
         }
       }
 
-      if (type === 'session.status_idle' || type === 'session.completed' || type === 'session.idle') {
+      // ── Text content ──────────────────────────────────────────────────────
+      // Collect text from ALL event types that carry content blocks
+      const contentBlocks = event.content || event.delta?.content || []
+      for (const block of contentBlocks) {
+        // Main output text — from final assistant/agent messages
+        if (block.type === 'text' && block.text) {
+          if (TEXT_EVENT_TYPES.has(type) || type.includes('message') || type.includes('agent')) {
+            outputText += block.text
+          }
+        }
+
+        // Files
+        const fileId =
+          block.file?.id || block.file_id ||
+          block.source?.file_id ||
+          (block.type === 'file' && block.id) || null
+        if (fileId && !files.find(f => f.fileId === fileId)) {
+          files.push({
+            fileId,
+            filename: block.file?.name || block.file?.filename || block.filename || block.name || null,
+            contentType: block.file?.media_type || block.media_type || 'application/octet-stream'
+          })
+        }
+      }
+
+      // ── Done signals ──────────────────────────────────────────────────────
+      if (
+        type === 'session.status_idle' ||
+        type === 'session.completed'   ||
+        type === 'session.idle'
+      ) {
         done = true
         activeAgents = []
       }
     }
 
-    // Fallback: check session status directly if no done event found yet
-    if (!done) {
+    // Fallback: poll session status
+    if (!done && !fatalError) {
       try {
-        const statusRes = await fetch(`https://api.anthropic.com/v1/sessions/${sessionId}`, { headers })
-        if (statusRes.ok) {
-          const statusData = await statusRes.json()
-          if (statusData.status === 'idle' || statusData.status === 'completed') {
+        const sr = await fetch(`https://api.anthropic.com/v1/sessions/${sessionId}`, { headers })
+        if (sr.ok) {
+          const sd = await sr.json()
+          if (sd.status === 'idle' || sd.status === 'completed') {
+            done = true
+            activeAgents = []
+          }
+          // Check for error status on the session itself
+          if (sd.status === 'error' || sd.last_error) {
+            const e = sd.last_error || {}
+            fatalError = {
+              code: e.code || sd.status,
+              message: e.message || 'Session ended with an error.'
+            }
             done = true
             activeAgents = []
           }
@@ -98,7 +146,18 @@ export async function GET(req) {
       } catch (_) {}
     }
 
-    return Response.json({ done, outputText, files, agentsEngaged, activeAgents, completedAgents })
+    return Response.json({
+      done,
+      fatalError,
+      outputText,
+      statusLog,
+      files,
+      agentsEngaged,
+      activeAgents,
+      completedAgents,
+      // expose raw event types seen — useful for debugging
+      _eventTypes: [...new Set(events.map(e => e.type))]
+    })
 
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
