@@ -187,6 +187,17 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
 
         {fatalError ? (
           <ErrorBanner error={fatalError} />
+        ) : !streaming && !content ? (
+          <div className="error-banner" style={{ background: '#fffbeb', borderColor: '#fcd34d' }}>
+            <div className="error-banner-icon" style={{ color: '#d97706' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <div>
+              <div className="error-banner-title" style={{ color: '#b45309' }}>Response not captured</div>
+              <div className="error-banner-msg">This request did not complete — likely due to insufficient API credits or a billing limit at the time. Top up your Anthropic account and try again.</div>
+              <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="error-banner-link">Go to Anthropic billing →</a>
+            </div>
+          </div>
         ) : (
           <>
             <div className="assistant-content">
