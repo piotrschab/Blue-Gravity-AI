@@ -122,28 +122,55 @@ export async function GET(req) {
       }
     }
 
-    // Fallback: poll session status
-    if (!done && !fatalError) {
+    // Fallback: poll session status directly
+    if (!done || !fatalError) {
       try {
         const sr = await fetch(`https://api.anthropic.com/v1/sessions/${sessionId}`, { headers })
         if (sr.ok) {
           const sd = await sr.json()
+
+          // Any idle/completed state means done
           if (sd.status === 'idle' || sd.status === 'completed') {
             done = true
             activeAgents = []
           }
-          // Check for error status on the session itself
-          if (sd.status === 'error' || sd.last_error) {
-            const e = sd.last_error || {}
+
+          // Error in last_error field
+          if (sd.last_error) {
+            const e = sd.last_error
             fatalError = {
-              code: e.code || sd.status,
-              message: e.message || 'Session ended with an error.'
+              code: e.type || e.code || e.error_type || 'error',
+              message: e.message || JSON.stringify(e)
             }
+            done = true
+            activeAgents = []
+          }
+
+          // Error in status
+          if (sd.status === 'error') {
+            fatalError = fatalError || { code: 'session_error', message: 'Session ended with an error. Check Claude Console for details.' }
             done = true
             activeAgents = []
           }
         }
       } catch (_) {}
+    }
+
+    // If we're done but got no output and no error, session likely errored silently
+    // (e.g. billing error shows as event but parser missed it — return a fallback)
+    if (done && !outputText && !fatalError) {
+      // Look for error info in the raw event list one more time, more broadly
+      for (const ev of events) {
+        const msg = ev.message || ev.error?.message || ev.content?.[0]?.text || ''
+        if (msg.toLowerCase().includes('credit') || msg.toLowerCase().includes('billing')) {
+          fatalError = { code: 'billing_error', message: msg }
+          break
+        }
+        if (ev.type?.toLowerCase().includes('error') && msg) {
+          fatalError = { code: ev.error?.type || 'error', message: msg }
+          break
+        }
+      }
     }
 
     return Response.json({

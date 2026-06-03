@@ -426,7 +426,12 @@ export default function Home() {
 
           if (ev.fatalError || ev.done) {
             stopPolling()
-            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc, ev.fatalError)
+            // If done with no output and no detected error, create a generic error
+            const err = ev.fatalError || (!ev.outputText ? {
+              code: 'no_response',
+              message: 'The agent did not return a response. This may be due to a billing limit or API error. Check Claude Console for details.'
+            } : null)
+            finish(ev.outputText || '', allAcc, convId, sid, text, userMsg, filesAcc, err)
           }
         } catch (e) { console.error('Poll:', e) }
       }, 2000)
@@ -453,7 +458,15 @@ export default function Home() {
     }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
-      if (!fatalError) generateTitle(userText).then(title => saveHistory(convId, sid, title, updated, agents))
+      // Always save — even errors — so sidebar history is complete
+      const title = fatalError
+        ? (userText.length > 50 ? userText.slice(0, 50) + '…' : userText)
+        : null
+      if (title) {
+        saveHistory(convId, sid, title, updated, agents)
+      } else {
+        generateTitle(userText).then(t => saveHistory(convId, sid, t, updated, agents))
+      }
       return updated
     })
   }
