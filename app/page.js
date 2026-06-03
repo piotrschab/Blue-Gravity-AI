@@ -176,7 +176,7 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
             {agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)}
           </div>
         )}
-        {/* Live status log — shown while streaming */}
+
         {streaming && statusLog?.length > 0 && (
           <div className="status-log">
             {statusLog.map((s, i) => (
@@ -184,36 +184,40 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
             ))}
           </div>
         )}
+
         {fatalError ? (
           <ErrorBanner error={fatalError} />
         ) : (
-        <div className="assistant-content">
-          {streaming && !content
-            ? <Dots />
-            : <Markdown text={content} />
-          }
-          {streaming && content && <span className="cursor" />}
-        </div>
-        {files?.length > 0 && (
-          <div className="file-downloads">
-            {files.map(f => (
-              <a
-                key={f.fileId}
-                className="file-download-btn"
-                href={`/api/download/${f.fileId}`}
-                download={f.filename || 'download'}
-              >
-                <div className="file-icon">{fileIcon(f.contentType)}</div>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{f.filename || 'Download file'}</div>
-                  <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>Click to download</div>
-                </div>
-                <svg style={{ marginLeft: 'auto' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              </a>
-            ))}
-          </div>
+          <>
+            <div className="assistant-content">
+              {streaming && !content
+                ? <Dots />
+                : <Markdown text={content} />
+              }
+              {streaming && content && <span className="cursor" />}
+            </div>
+            {files?.length > 0 && (
+              <div className="file-downloads">
+                {files.map(f => (
+                  <a
+                    key={f.fileId}
+                    className="file-download-btn"
+                    href={`/api/download/${f.fileId}`}
+                    download={f.filename || 'download'}
+                  >
+                    <div className="file-icon">{fileIcon(f.contentType)}</div>
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{f.filename || 'Download file'}</div>
+                      <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>Click to download</div>
+                    </div>
+                    <svg style={{ marginLeft: 'auto' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </a>
+                ))}
+              </div>
+            )}
+          </>
         )}
-        )}
+
         {!streaming && time && <div className="msg-time">{time}</div>}
       </div>
     </div>
