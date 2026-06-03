@@ -171,11 +171,17 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
     <div className="msg-row assistant-row">
       <div className="avatar">O</div>
       <div className="assistant-body">
-        {agents?.length > 0 && (
-          <div className="agent-pills">
-            {agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)}
-          </div>
-        )}
+        <div className="agent-pills">
+          {agents?.length > 0
+            ? agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)
+            : !streaming && (
+                <span className="agent-pill" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)', color: '#94a3b8' }}>
+                  <span className="agent-dot" style={{ background: '#94a3b8' }} />
+                  Orchestrator
+                </span>
+              )
+          }
+        </div>
 
         {streaming && statusLog?.length > 0 && (
           <div className="status-log">
