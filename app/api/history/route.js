@@ -1,22 +1,33 @@
-import { createClient } from '@supabase/supabase-js'
-
-function getSupabase() {
+function getSupabaseConfig() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
-  if (!url || !key) throw new Error('Supabase env vars not configured (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)')
-  return createClient(url, key)
+  if (!url || !key) {
+    throw new Error(`Missing env vars: ${!url ? 'NEXT_PUBLIC_SUPABASE_URL ' : ''}${!key ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY' : ''}`.trim())
+  }
+  return { url: url.replace(/\/$/, ''), key }
+}
+
+function supabaseHeaders(key) {
+  return {
+    'apikey': key,
+    'Authorization': `Bearer ${key}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  }
 }
 
 export async function GET() {
   try {
-    const supabase = getSupabase()
-    const { data, error } = await supabase
-      .from('bgc_conversations')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100)
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
+    const { url, key } = getSupabaseConfig()
+    const res = await fetch(
+      `${url}/rest/v1/bgc_conversations?select=*&order=created_at.desc&limit=100`,
+      { headers: supabaseHeaders(key) }
+    )
+    if (!res.ok) {
+      const text = await res.text()
+      return Response.json({ error: `Supabase ${res.status}: ${text.slice(0, 300)}` }, { status: 500 })
+    }
+    const data = await res.json()
     return Response.json({ conversations: data || [] })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
@@ -32,9 +43,8 @@ export async function POST(req) {
       return Response.json({ error: 'Missing conversationId' }, { status: 400 })
     }
 
-    const supabase = getSupabase()
+    const { url, key } = getSupabaseConfig()
 
-    // Build update payload — omit title if null so existing title is preserved
     const payload = {
       conversation_id: conversationId,
       session_id: sessionId || null,
@@ -45,14 +55,20 @@ export async function POST(req) {
     }
     if (title !== null && title !== undefined) payload.title = title
 
-    const { data, error } = await supabase
-      .from('bgc_conversations')
-      .upsert(payload, { onConflict: 'conversation_id' })
-      .select()
-      .single()
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
-    return Response.json({ conversation: data })
+    const res = await fetch(
+      `${url}/rest/v1/bgc_conversations?on_conflict=conversation_id`,
+      {
+        method: 'POST',
+        headers: { ...supabaseHeaders(key), 'Prefer': 'return=representation,resolution=merge-duplicates' },
+        body: JSON.stringify(payload)
+      }
+    )
+    if (!res.ok) {
+      const text = await res.text()
+      return Response.json({ error: `Supabase ${res.status}: ${text.slice(0, 300)}` }, { status: 500 })
+    }
+    const data = await res.json()
+    return Response.json({ conversation: data?.[0] || null })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
   }
@@ -63,13 +79,19 @@ export async function PATCH(req) {
     const { conversationId, title } = await req.json()
     if (!conversationId || !title) return Response.json({ error: 'Missing fields' }, { status: 400 })
 
-    const supabase = getSupabase()
-    const { error } = await supabase
-      .from('bgc_conversations')
-      .update({ title, updated_at: new Date().toISOString() })
-      .eq('conversation_id', conversationId)
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
+    const { url, key } = getSupabaseConfig()
+    const res = await fetch(
+      `${url}/rest/v1/bgc_conversations?conversation_id=eq.${encodeURIComponent(conversationId)}`,
+      {
+        method: 'PATCH',
+        headers: supabaseHeaders(key),
+        body: JSON.stringify({ title, updated_at: new Date().toISOString() })
+      }
+    )
+    if (!res.ok) {
+      const text = await res.text()
+      return Response.json({ error: `Supabase ${res.status}: ${text.slice(0, 300)}` }, { status: 500 })
+    }
     return Response.json({ ok: true })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
@@ -81,13 +103,18 @@ export async function DELETE(req) {
     const { conversationId } = await req.json()
     if (!conversationId) return Response.json({ error: 'Missing conversationId' }, { status: 400 })
 
-    const supabase = getSupabase()
-    const { error } = await supabase
-      .from('bgc_conversations')
-      .delete()
-      .eq('conversation_id', conversationId)
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
+    const { url, key } = getSupabaseConfig()
+    const res = await fetch(
+      `${url}/rest/v1/bgc_conversations?conversation_id=eq.${encodeURIComponent(conversationId)}`,
+      {
+        method: 'DELETE',
+        headers: supabaseHeaders(key)
+      }
+    )
+    if (!res.ok) {
+      const text = await res.text()
+      return Response.json({ error: `Supabase ${res.status}: ${text.slice(0, 300)}` }, { status: 500 })
+    }
     return Response.json({ ok: true })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
