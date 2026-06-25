@@ -273,13 +273,19 @@ export default function Home() {
   async function loadHistory() {
     setHistoryLoading(true)
     setHistoryError(null)
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 15000)
     try {
-      const r = await fetch('/api/history')
+      const r = await fetch('/api/history', { signal: ctrl.signal })
+      clearTimeout(t)
+      if (!r.ok) throw new Error(`Server error ${r.status}`)
       const d = await r.json()
       if (d.error) throw new Error(d.error)
       setConversations(d.conversations || [])
     } catch (e) {
-      setHistoryError(e.message)
+      clearTimeout(t)
+      if (e.name === 'AbortError') setHistoryError('Request timed out — check Vercel env vars (NEXT_PUBLIC_SUPABASE_URL)')
+      else setHistoryError(e.message)
     } finally {
       setHistoryLoading(false)
     }
