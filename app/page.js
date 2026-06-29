@@ -740,8 +740,8 @@ export default function Home() {
         .bubble-text { background: #2563eb; color: #fff; border-radius: 20px 20px 5px 20px; padding: 12px 18px; font-size: 15px; line-height: 1.65; font-weight: 400; box-shadow: 0 2px 12px rgba(37,99,235,.25); }
         .bubble-time { font-size: 11px; color: #94a3b8; text-align: right; margin-top: 5px; }
         .user-attachments { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
-        .user-attachment { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); border-radius: 10px; color: #fff; font-size: 12px; font-weight: 500; text-decoration: none; transition: background .15s; max-width: 260px; }
-        .user-attachment:hover { background: rgba(255,255,255,.25); }
+        .user-attachment { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; background: #1d4ed8; border: 1px solid rgba(255,255,255,.3); border-radius: 10px; color: #fff; font-size: 12px; font-weight: 500; text-decoration: none; transition: background .15s; max-width: 260px; }
+        .user-attachment:hover { background: #1e40af; }
         .user-attachment-icon { flex-shrink: 0; opacity: .85; }
         .user-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
