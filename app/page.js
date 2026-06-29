@@ -199,24 +199,58 @@ function ErrorBanner({ error }) {
   )
 }
 
-function AssistantMsg({ content, agents, time, streaming, files, fatalError, statusLog, totalMs }) {
-  const lastStatus = statusLog?.length > 0 ? statusLog[statusLog.length - 1] : null
+function AssistantMsg({ content, agents, time, streaming, files, fatalError, statusLog, totalMs, elapsed }) {
+  const now = Date.now()
 
   return (
     <div className="msg-row assistant-row">
       <div className="avatar">O</div>
       <div className="assistant-body">
 
-        {/* Agent pills with timing — only after completion */}
+        {/* During streaming: compact progress with live per-agent timers */}
+        {streaming && (
+          <div className="stream-status">
+            {agents?.length > 0 ? (
+              agents.map((a, i) => {
+                const isCompleted = !!a.clientEndMs
+                const liveMs = isCompleted
+                  ? a.clientDurMs
+                  : (a.clientStartMs ? now - a.clientStartMs : null)
+                return (
+                  <div key={a.threadId || i} className="stream-agent-row">
+                    <span className="stream-agent-status">
+                      {isCompleted
+                        ? <span className="check">✓</span>
+                        : <Dots color={PALETTE[i % 4].dot} />
+                      }
+                    </span>
+                    <AgentPill idx={i} name={a.agentName} />
+                    {liveMs != null && (
+                      <span className={`stream-agent-timer ${isCompleted ? 'done' : ''}`}>
+                        {fmtDur(liveMs)}
+                      </span>
+                    )}
+                  </div>
+                )
+              })
+            ) : (
+              <div className="stream-agent-row">
+                <Dots />
+                <span className="stream-status-label">Orchestrator analyzes…</span>
+                {elapsed > 0 && <span className="stream-agent-timer">{fmtDur(elapsed * 1000)}</span>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* After completion: agent pills with durations */}
         {!streaming && (
           <div className="agent-pills">
             {agents?.length > 0
               ? agents.map((a, i) => (
                   <span key={i} className="agent-pill-wrap">
                     <AgentPill idx={i} name={a.agentName} />
-                    {fmtDur(a.durationMs) && (
-                      <span className="pill-dur">{fmtDur(a.durationMs)}</span>
-                    )}
+                    {fmtDur(a.durationMs) && <span className="pill-dur">{fmtDur(a.durationMs)}</span>}
                   </span>
                 ))
               : (
@@ -225,29 +259,10 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
                       <span className="agent-dot" style={{ background: '#94a3b8' }} />
                       Orchestrator
                     </span>
-                    {fmtDur(totalMs) && (
-                      <span className="pill-dur">{fmtDur(totalMs)}</span>
-                    )}
+                    {fmtDur(totalMs) && <span className="pill-dur">{fmtDur(totalMs)}</span>}
                   </span>
                 )
             }
-          </div>
-        )}
-
-        {/* During streaming: show compact status only */}
-        {streaming && (
-          <div className="stream-status">
-            <div className="stream-status-row">
-              <Dots />
-              <span className="stream-status-label">
-                {lastStatus || 'Processing…'}
-              </span>
-            </div>
-            {agents?.length > 0 && (
-              <div className="stream-agents">
-                {agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)}
-              </div>
-            )}
           </div>
         )}
 
@@ -294,6 +309,12 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
           )
         )}
 
+        {!streaming && totalMs && (
+          <div className="total-time">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Total processing time: <strong>{fmtDur(totalMs)}</strong>
+          </div>
+        )}
         {!streaming && time && <div className="msg-time">{time}</div>}
       </div>
     </div>
@@ -319,7 +340,9 @@ export default function Home() {
   const [hoveredConvId, setHoveredConvId]   = useState(null)
   const [attachedFiles, setAttachedFiles]   = useState([])  // [{fileId, filename, contentType, size}]
   const [uploading, setUploading]           = useState(false)
-  const sendTimeRef = useRef(null)   // ms timestamp when send() was called
+  const sendTimeRef        = useRef(null)  // ms when send() called
+  const agentStartTimesRef = useRef({})    // threadId → client ms
+  const agentEndTimesRef   = useRef({})    // threadId → client ms
 
   const bottomRef    = useRef(null)
   const inputRef     = useRef(null)
@@ -432,6 +455,7 @@ export default function Home() {
     setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0); streamIdRef.current = null
     setAttachedFiles([])
+    agentStartTimesRef.current = {}; agentEndTimesRef.current = {}
     inputRef.current?.focus()
   }
 
@@ -454,6 +478,7 @@ export default function Home() {
     setAttachedFiles([])
     setRunning(true)
     sendTimeRef.current = Date.now()
+    agentStartTimesRef.current = {}; agentEndTimesRef.current = {}
     setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0)
 
@@ -499,17 +524,45 @@ export default function Home() {
           const ev = await (await fetch(`/api/events?sessionId=${sid}`)).json()
           if (ev.error) { console.error('Events:', ev.error); return }
 
-          if (ev.agentsEngaged?.length) { allAcc = ev.agentsEngaged; setAllAgents([...allAcc]) }
-          if (ev.activeAgents)          { activeAcc = ev.activeAgents;    setActiveAgents([...activeAcc]) }
-          if (ev.completedAgents)       { completedAcc = ev.completedAgents; setCompletedAgents([...completedAcc]) }
-          if (ev.files?.length)         { filesAcc = ev.files }
+          if (ev.agentsEngaged?.length) {
+            // Record client-side start time on first sight of each agent
+            ev.agentsEngaged.forEach(a => {
+              if (!agentStartTimesRef.current[a.threadId]) {
+                agentStartTimesRef.current[a.threadId] = Date.now()
+              }
+            })
+            allAcc = ev.agentsEngaged
+            setAllAgents([...allAcc])
+          }
+          if (ev.activeAgents)    { activeAcc = ev.activeAgents;    setActiveAgents([...activeAcc]) }
+          if (ev.completedAgents) {
+            // Record client-side end time on first completion
+            ev.completedAgents.forEach(tid => {
+              if (!agentEndTimesRef.current[tid]) {
+                agentEndTimesRef.current[tid] = Date.now()
+              }
+            })
+            completedAcc = ev.completedAgents
+            setCompletedAgents([...completedAcc])
+          }
+          if (ev.files?.length) { filesAcc = ev.files }
+
+          // Build enriched agents with client-side durations for streaming display
+          const enriched = allAcc.map(a => ({
+            ...a,
+            clientStartMs:  agentStartTimesRef.current[a.threadId] || null,
+            clientEndMs:    agentEndTimesRef.current[a.threadId]   || null,
+            clientDurMs:    agentEndTimesRef.current[a.threadId] && agentStartTimesRef.current[a.threadId]
+                              ? agentEndTimesRef.current[a.threadId] - agentStartTimesRef.current[a.threadId]
+                              : null
+          }))
 
           // Always update the streaming message with latest content + status log
           setMessages(prev => prev.map(m =>
             m.id === streamIdRef.current ? {
               ...m,
               content: ev.outputText || m.content,
-              agents: allAcc,
+              agents: enriched,
               files: filesAcc,
               statusLog: ev.statusLog || [],
               fatalError: ev.fatalError || null
@@ -543,10 +596,18 @@ export default function Home() {
     setElapsed(0)
     const now = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
     const totalMs = sendTimeRef.current ? Date.now() - sendTimeRef.current : null
+    // Enrich agents with client-side durations (fallback when server timestamps missing)
+    const enrichedAgents = agents.map(a => ({
+      ...a,
+      durationMs: a.durationMs
+        || (agentEndTimesRef.current[a.threadId] && agentStartTimesRef.current[a.threadId]
+            ? agentEndTimesRef.current[a.threadId] - agentStartTimesRef.current[a.threadId]
+            : null)
+    }))
     const final = {
       id: streamIdRef.current, role: 'assistant',
       content: finalText, streaming: false,
-      agents, files, fatalError, statusLog: [], time: now, totalMs
+      agents: enrichedAgents, files, fatalError, statusLog: [], time: now, totalMs
     }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
@@ -772,10 +833,15 @@ export default function Home() {
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
         /* Streaming status (compact, no content) */
-        .stream-status { padding: 14px 18px; background: #fff; border-radius: 4px 20px 20px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
-        .stream-status-row { display: flex; align-items: center; gap: 10px; }
+        .stream-status { padding: 14px 18px; background: #fff; border-radius: 4px 20px 20px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); display: flex; flex-direction: column; gap: 10px; }
+        .stream-agent-row { display: flex; align-items: center; gap: 8px; }
+        .stream-agent-status { width: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
         .stream-status-label { font-size: 13px; color: #64748b; font-weight: 500; }
-        .stream-agents { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+        .stream-agent-timer { font-size: 12px; color: #94a3b8; font-weight: 600; margin-left: auto; font-variant-numeric: tabular-nums; }
+        .stream-agent-timer.done { color: #22c55e; }
+
+        /* Total time footer */
+        .total-time { display: flex; align-items: center; gap: 5px; margin-top: 12px; padding: 8px 12px; background: #f8faff; border: 1px solid #e0e9ff; border-radius: 8px; font-size: 12px; color: #64748b; width: fit-content; }
 
         /* File attach chips */
         .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
@@ -920,7 +986,7 @@ export default function Home() {
                 {messages.map(m =>
                   m.role === 'user'
                     ? <UserMsg key={m.id} content={m.content} time={m.time} attachments={m.attachments} />
-                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} fatalError={m.fatalError} statusLog={m.statusLog} totalMs={m.totalMs} />
+                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} fatalError={m.fatalError} statusLog={m.statusLog} totalMs={m.totalMs} elapsed={m.streaming ? elapsed : 0} />
                 )}
                 <PipelineBar active={activeAgents} completed={completedAgents} all={allAgents} running={running} elapsed={elapsed} />
                 <div ref={bottomRef} />
