@@ -139,10 +139,29 @@ function PipelineBar({ active, completed, all, running, elapsed }) {
   )
 }
 
-function UserMsg({ content, time }) {
+function UserMsg({ content, time, attachments }) {
   return (
     <div className="msg-row user-row">
       <div className="user-bubble">
+        {attachments?.length > 0 && (
+          <div className="user-attachments">
+            {attachments.map(f => (
+              <a
+                key={f.fileId}
+                className="user-attachment"
+                href={`/api/download/${f.fileId}`}
+                download={f.filename || 'download'}
+                title="Click to download"
+              >
+                <span className="user-attachment-icon">
+                  {fileIcon(f.contentType)}
+                </span>
+                <span className="user-attachment-name">{f.filename || 'Attachment'}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </a>
+            ))}
+          </div>
+        )}
         <div className="bubble-text">{content}</div>
         {time && <div className="bubble-time">{time}</div>}
       </div>
@@ -439,7 +458,7 @@ export default function Home() {
     setElapsed(0)
 
     const now = () => new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-    const userMsg = { id: Date.now(), role: 'user', content: text, time: now() }
+    const userMsg = { id: Date.now(), role: 'user', content: text, time: now(), attachments: filesToSend }
     const streamId = Date.now() + 1
     streamIdRef.current = streamId
     const streamMsg = { id: streamId, role: 'assistant', content: '', streaming: true, agents: [] }
@@ -659,6 +678,11 @@ export default function Home() {
         .user-bubble { max-width: 72%; }
         .bubble-text { background: #2563eb; color: #fff; border-radius: 20px 20px 5px 20px; padding: 12px 18px; font-size: 15px; line-height: 1.65; font-weight: 400; box-shadow: 0 2px 12px rgba(37,99,235,.25); }
         .bubble-time { font-size: 11px; color: #94a3b8; text-align: right; margin-top: 5px; }
+        .user-attachments { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+        .user-attachment { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); border-radius: 10px; color: #fff; font-size: 12px; font-weight: 500; text-decoration: none; transition: background .15s; max-width: 260px; }
+        .user-attachment:hover { background: rgba(255,255,255,.25); }
+        .user-attachment-icon { flex-shrink: 0; opacity: .85; }
+        .user-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
         .assistant-row { align-items: flex-start; }
         .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg,#1d4ed8,#3b82f6); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0; margin-top: 2px; box-shadow: 0 2px 8px rgba(59,130,246,.2); }
@@ -895,7 +919,7 @@ export default function Home() {
               <div className="messages-inner">
                 {messages.map(m =>
                   m.role === 'user'
-                    ? <UserMsg key={m.id} content={m.content} time={m.time} />
+                    ? <UserMsg key={m.id} content={m.content} time={m.time} attachments={m.attachments} />
                     : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} fatalError={m.fatalError} statusLog={m.statusLog} totalMs={m.totalMs} />
                 )}
                 <PipelineBar active={activeAgents} completed={completedAgents} all={allAgents} running={running} elapsed={elapsed} />
