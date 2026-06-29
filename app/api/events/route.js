@@ -65,7 +65,10 @@ export async function GET(req) {
       if (type === 'session.thread_created') {
         const agent = {
           threadId: event.thread_id || event.id || '',
-          agentName: event.agent_name || event.agent?.name || null
+          agentName: event.agent_name || event.agent?.name || null,
+          startedAt: event.created_at || null,
+          completedAt: null,
+          durationMs: null
         }
         if (!agentsEngaged.find(a => a.threadId === agent.threadId)) {
           agentsEngaged.push(agent)
@@ -79,6 +82,12 @@ export async function GET(req) {
       if (type === 'session.thread_status_idle') {
         const tid = event.thread_id || ''
         const agent = agentsEngaged.find(a => a.threadId === tid)
+        if (agent) {
+          agent.completedAt = event.created_at || null
+          if (agent.startedAt && agent.completedAt) {
+            agent.durationMs = new Date(agent.completedAt) - new Date(agent.startedAt)
+          }
+        }
         activeAgents = activeAgents.filter(a => a.threadId !== tid)
         if (!completedAgents.includes(tid)) completedAgents.push(tid)
         if (agent?.agentName) {

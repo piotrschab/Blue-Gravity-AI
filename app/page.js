@@ -2,6 +2,15 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function fmtDur(ms) {
+  if (!ms || ms < 0) return null
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`
+  const m = Math.floor(ms / 60000)
+  const s = Math.round((ms % 60000) / 1000)
+  return s > 0 ? `${m}m ${s}s` : `${m}m`
+}
+
 // ─── Agent colour palette ────────────────────────────────────────────────────
 const PALETTE = [
   { dot: '#60a5fa', bg: 'rgba(96,165,250,0.12)', border: 'rgba(96,165,250,0.25)', name: 'Research' },
@@ -91,6 +100,7 @@ function Dots({ color = '#60a5fa' }) {
 
 function PipelineBar({ active, completed, all, running, elapsed }) {
   if (!running) return null
+  const now = Date.now()
   return (
     <div className="pipeline-bar">
       <div className="pipeline-inner">
@@ -100,10 +110,12 @@ function PipelineBar({ active, completed, all, running, elapsed }) {
           )}
           {active.map(a => {
             const idx = all.findIndex(x => x.threadId === a.threadId)
+            const agentElapsed = a.startedAt ? fmtDur(now - new Date(a.startedAt).getTime()) : null
             return (
               <span key={a.threadId} className="pipeline-agent">
                 <AgentPill idx={idx} name={a.agentName} />
                 <Dots color={PALETTE[idx % 4].dot} />
+                {agentElapsed && <span className="agent-timer">{agentElapsed}</span>}
               </span>
             )
           })}
@@ -111,15 +123,17 @@ function PipelineBar({ active, completed, all, running, elapsed }) {
             const a = all.find(x => x.threadId === tid)
             if (!a) return null
             const idx = all.findIndex(x => x.threadId === tid)
+            const dur = fmtDur(a.durationMs)
             return (
               <span key={tid} className="pipeline-agent done">
                 <span className="check">✓</span>
                 <AgentPill idx={idx} name={a.agentName} />
+                {dur && <span className="agent-timer done-timer">{dur}</span>}
               </span>
             )
           })}
         </div>
-        {elapsed > 0 && <span className="pipeline-elapsed">{elapsed}s</span>}
+        {elapsed > 0 && <span className="pipeline-elapsed">Total: {elapsed}s</span>}
       </div>
     </div>
   )
@@ -166,7 +180,7 @@ function ErrorBanner({ error }) {
   )
 }
 
-function AssistantMsg({ content, agents, time, streaming, files, fatalError, statusLog }) {
+function AssistantMsg({ content, agents, time, streaming, files, fatalError, statusLog, totalMs }) {
   const lastStatus = statusLog?.length > 0 ? statusLog[statusLog.length - 1] : null
 
   return (
@@ -174,15 +188,27 @@ function AssistantMsg({ content, agents, time, streaming, files, fatalError, sta
       <div className="avatar">O</div>
       <div className="assistant-body">
 
-        {/* Agent pills — only after completion */}
+        {/* Agent pills with timing — only after completion */}
         {!streaming && (
           <div className="agent-pills">
             {agents?.length > 0
-              ? agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)
+              ? agents.map((a, i) => (
+                  <span key={i} className="agent-pill-wrap">
+                    <AgentPill idx={i} name={a.agentName} />
+                    {fmtDur(a.durationMs) && (
+                      <span className="pill-dur">{fmtDur(a.durationMs)}</span>
+                    )}
+                  </span>
+                ))
               : (
-                  <span className="agent-pill" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)', color: '#94a3b8' }}>
-                    <span className="agent-dot" style={{ background: '#94a3b8' }} />
-                    Orchestrator
+                  <span className="agent-pill-wrap">
+                    <span className="agent-pill" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)', color: '#94a3b8' }}>
+                      <span className="agent-dot" style={{ background: '#94a3b8' }} />
+                      Orchestrator
+                    </span>
+                    {fmtDur(totalMs) && (
+                      <span className="pill-dur">{fmtDur(totalMs)}</span>
+                    )}
                   </span>
                 )
             }
@@ -274,6 +300,7 @@ export default function Home() {
   const [hoveredConvId, setHoveredConvId]   = useState(null)
   const [attachedFiles, setAttachedFiles]   = useState([])  // [{fileId, filename, contentType, size}]
   const [uploading, setUploading]           = useState(false)
+  const sendTimeRef = useRef(null)   // ms timestamp when send() was called
 
   const bottomRef    = useRef(null)
   const inputRef     = useRef(null)
@@ -407,6 +434,7 @@ export default function Home() {
     setInput('')
     setAttachedFiles([])
     setRunning(true)
+    sendTimeRef.current = Date.now()
     setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0)
 
@@ -495,10 +523,11 @@ export default function Home() {
     setActiveAgents([])
     setElapsed(0)
     const now = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+    const totalMs = sendTimeRef.current ? Date.now() - sendTimeRef.current : null
     const final = {
       id: streamIdRef.current, role: 'assistant',
       content: finalText, streaming: false,
-      agents, files, fatalError, statusLog: [], time: now
+      agents, files, fatalError, statusLog: [], time: now, totalMs
     }
     setMessages(prev => {
       const updated = prev.map(m => m.id === streamIdRef.current ? final : m)
@@ -634,9 +663,13 @@ export default function Home() {
         .assistant-row { align-items: flex-start; }
         .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg,#1d4ed8,#3b82f6); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0; margin-top: 2px; box-shadow: 0 2px 8px rgba(59,130,246,.2); }
         .assistant-body { flex: 1; min-width: 0; }
-        .agent-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+        .agent-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+        .agent-pill-wrap { display: inline-flex; align-items: center; gap: 5px; }
         .agent-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 500; letter-spacing: .02em; }
         .agent-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+        .pill-dur { font-size: 11px; color: #94a3b8; font-weight: 500; }
+        .agent-timer { font-size: 11px; color: #94a3b8; font-weight: 500; }
+        .agent-timer.done-timer { color: #22c55e; }
         .assistant-content { font-size: 15px; line-height: 1.8; color: #334155; background: #fff; border-radius: 4px 20px 20px 20px; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
         .msg-time { font-size: 11px; color: #94a3b8; margin-top: 6px; padding-left: 4px; }
 
@@ -863,7 +896,7 @@ export default function Home() {
                 {messages.map(m =>
                   m.role === 'user'
                     ? <UserMsg key={m.id} content={m.content} time={m.time} />
-                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} fatalError={m.fatalError} statusLog={m.statusLog} />
+                    : <AssistantMsg key={m.id} content={m.content} agents={m.agents} time={m.time} streaming={m.streaming} files={m.files} fatalError={m.fatalError} statusLog={m.statusLog} totalMs={m.totalMs} />
                 )}
                 <PipelineBar active={activeAgents} completed={completedAgents} all={allAgents} running={running} elapsed={elapsed} />
                 <div ref={bottomRef} />
