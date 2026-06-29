@@ -167,72 +167,86 @@ function ErrorBanner({ error }) {
 }
 
 function AssistantMsg({ content, agents, time, streaming, files, fatalError, statusLog }) {
+  const lastStatus = statusLog?.length > 0 ? statusLog[statusLog.length - 1] : null
+
   return (
     <div className="msg-row assistant-row">
       <div className="avatar">O</div>
       <div className="assistant-body">
-        <div className="agent-pills">
-          {agents?.length > 0
-            ? agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)
-            : !streaming && (
-                <span className="agent-pill" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)', color: '#94a3b8' }}>
-                  <span className="agent-dot" style={{ background: '#94a3b8' }} />
-                  Orchestrator
-                </span>
-              )
-          }
-        </div>
 
-        {streaming && statusLog?.length > 0 && (
-          <div className="status-log">
-            {statusLog.map((s, i) => (
-              <div key={i} className="status-log-line">{s}</div>
-            ))}
+        {/* Agent pills — only after completion */}
+        {!streaming && (
+          <div className="agent-pills">
+            {agents?.length > 0
+              ? agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)
+              : (
+                  <span className="agent-pill" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)', color: '#94a3b8' }}>
+                    <span className="agent-dot" style={{ background: '#94a3b8' }} />
+                    Orchestrator
+                  </span>
+                )
+            }
           </div>
         )}
 
-        {fatalError ? (
-          <ErrorBanner error={fatalError} />
-        ) : !streaming && !content ? (
-          <div className="error-banner" style={{ background: '#fffbeb', borderColor: '#fcd34d' }}>
-            <div className="error-banner-icon" style={{ color: '#d97706' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        {/* During streaming: show compact status only */}
+        {streaming && (
+          <div className="stream-status">
+            <div className="stream-status-row">
+              <Dots />
+              <span className="stream-status-label">
+                {lastStatus || 'Processing…'}
+              </span>
             </div>
-            <div>
-              <div className="error-banner-title" style={{ color: '#b45309' }}>Response not captured</div>
-              <div className="error-banner-msg">This request did not complete — likely due to insufficient API credits or a billing limit at the time. Top up your Anthropic account and try again.</div>
-              <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="error-banner-link">Go to Anthropic billing →</a>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="assistant-content">
-              {streaming && !content
-                ? <Dots />
-                : <Markdown text={content} />
-              }
-              {streaming && content && <span className="cursor" />}
-            </div>
-            {files?.length > 0 && (
-              <div className="file-downloads">
-                {files.map(f => (
-                  <a
-                    key={f.fileId}
-                    className="file-download-btn"
-                    href={`/api/download/${f.fileId}`}
-                    download={f.filename || 'download'}
-                  >
-                    <div className="file-icon">{fileIcon(f.contentType)}</div>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{f.filename || 'Download file'}</div>
-                      <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>Click to download</div>
-                    </div>
-                    <svg style={{ marginLeft: 'auto' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  </a>
-                ))}
+            {agents?.length > 0 && (
+              <div className="stream-agents">
+                {agents.map((a, i) => <AgentPill key={i} idx={i} name={a.agentName} />)}
               </div>
             )}
-          </>
+          </div>
+        )}
+
+        {/* After completion: show full content or error */}
+        {!streaming && (
+          fatalError ? (
+            <ErrorBanner error={fatalError} />
+          ) : !content ? (
+            <div className="error-banner" style={{ background: '#fffbeb', borderColor: '#fcd34d' }}>
+              <div className="error-banner-icon" style={{ color: '#d97706' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div>
+                <div className="error-banner-title" style={{ color: '#b45309' }}>Response not captured</div>
+                <div className="error-banner-msg">This request did not complete — likely due to insufficient API credits or a billing limit at the time.</div>
+                <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="error-banner-link">Go to Anthropic billing →</a>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="assistant-content">
+                <Markdown text={content} />
+              </div>
+              {files?.length > 0 && (
+                <div className="file-downloads">
+                  {files.map(f => (
+                    <a
+                      key={f.fileId}
+                      className="file-download-btn"
+                      href={`/api/download/${f.fileId}`}
+                      download={f.filename || 'download'}
+                    >
+                      <div className="file-icon">{fileIcon(f.contentType)}</div>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{f.filename || 'Download file'}</div>
+                        <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>Click to download</div>
+                      </div>
+                      <svg style={{ marginLeft: 'auto' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </>
+          )
         )}
 
         {!streaming && time && <div className="msg-time">{time}</div>}
@@ -258,9 +272,12 @@ export default function Home() {
   const [renamingId, setRenamingId]         = useState(null)
   const [renameValue, setRenameValue]       = useState('')
   const [hoveredConvId, setHoveredConvId]   = useState(null)
+  const [attachedFiles, setAttachedFiles]   = useState([])  // [{fileId, filename, contentType, size}]
+  const [uploading, setUploading]           = useState(false)
 
   const bottomRef    = useRef(null)
   const inputRef     = useRef(null)
+  const fileInputRef = useRef(null)
   const pollingRef   = useRef(null)
   const timerRef     = useRef(null)
   const streamIdRef  = useRef(null)
@@ -368,6 +385,7 @@ export default function Home() {
     setInput(''); setRunning(false)
     setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0); streamIdRef.current = null
+    setAttachedFiles([])
     inputRef.current?.focus()
   }
 
@@ -385,7 +403,9 @@ export default function Home() {
   async function send() {
     if (!input.trim() || running) return
     const text = input.trim()
+    const filesToSend = [...attachedFiles]
     setInput('')
+    setAttachedFiles([])
     setRunning(true)
     setActiveAgents([]); setCompletedAgents([]); setAllAgents([])
     setElapsed(0)
@@ -407,7 +427,7 @@ export default function Home() {
       const res = await fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text })
+        body: JSON.stringify({ prompt: text, files: filesToSend })
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
@@ -498,6 +518,26 @@ export default function Home() {
       }
       return updated
     })
+  }
+
+  async function uploadFile(file) {
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const r = await fetch('/api/upload', { method: 'POST', body: form })
+      const d = await r.json()
+      if (d.error) throw new Error(d.error)
+      setAttachedFiles(prev => [...prev, d])
+    } catch (e) {
+      alert(`Upload failed: ${e.message}`)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function removeAttached(fileId) {
+    setAttachedFiles(prev => prev.filter(f => f.fileId !== fileId))
   }
 
   function onKey(e) {
@@ -669,10 +709,26 @@ export default function Home() {
         @keyframes pulse  { 0%,100% { opacity:1 } 50% { opacity:.35 } }
 
         /* Scrollbar */
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,.04); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Streaming status (compact, no content) */
+        .stream-status { padding: 14px 18px; background: #fff; border-radius: 4px 20px 20px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+        .stream-status-row { display: flex; align-items: center; gap: 10px; }
+        .stream-status-label { font-size: 13px; color: #64748b; font-weight: 500; }
+        .stream-agents { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+
+        /* File attach chips */
+        .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .attach-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: 20px; background: #eff6ff; border: 1px solid #bfdbfe; font-size: 12px; color: #1d4ed8; font-weight: 500; max-width: 220px; }
+        .attach-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .attach-chip-rm { background: none; border: none; cursor: pointer; color: #93c5fd; padding: 0; line-height: 1; font-size: 14px; flex-shrink: 0; }
+        .attach-chip-rm:hover { color: #2563eb; }
+        .attach-btn { width: 34px; height: 34px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .15s; background: #f1f5f9; color: #64748b; }
+        .attach-btn:hover { background: #e2e8f0; color: #334155; }
+        .attach-btn:disabled { opacity: .5; cursor: not-allowed; }
       `}</style>
 
       <div className="shell">
@@ -817,7 +873,39 @@ export default function Home() {
 
           <div className="input-area">
             <div className="input-wrap">
+              {attachedFiles.length > 0 && (
+                <div className="attach-chips">
+                  {attachedFiles.map(f => (
+                    <div key={f.fileId} className="attach-chip">
+                      <span className="attach-chip-name" title={f.filename}>{f.filename}</span>
+                      <button className="attach-chip-rm" onClick={() => removeAttached(f.fileId)}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="input-box">
+                <button
+                  className="attach-btn"
+                  title="Attach file (Word, PDF, Excel, PowerPoint…)"
+                  disabled={running || uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {uploading
+                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  }
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  style={{ display: 'none' }}
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md"
+                  multiple
+                  onChange={e => {
+                    Array.from(e.target.files || []).forEach(uploadFile)
+                    e.target.value = ''
+                  }}
+                />
                 <textarea
                   ref={inputRef}
                   value={input}

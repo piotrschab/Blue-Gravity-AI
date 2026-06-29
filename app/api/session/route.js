@@ -1,6 +1,6 @@
 export async function POST(req) {
   try {
-    const { prompt } = await req.json()
+    const { prompt, files = [] } = await req.json()
 
     const sessionRes = await fetch('https://api.anthropic.com/v1/sessions', {
       method: 'POST',
@@ -38,7 +38,13 @@ export async function POST(req) {
       body: JSON.stringify({
         events: [{
           type: 'user.message',
-          content: [{ type: 'text', text: prompt }]
+          content: [
+            { type: 'text', text: prompt },
+            ...files.map(f => ({
+              type: 'document',
+              source: { type: 'file', file_id: f.fileId }
+            }))
+          ]
         }]
       })
     })
